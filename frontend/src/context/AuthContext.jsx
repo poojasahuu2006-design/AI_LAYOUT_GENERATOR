@@ -1,19 +1,25 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 
 const AuthContext = createContext();
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_BASE = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_URL || 'https://honest-spies-pull.loca.lt/api';
 
 // Safe Auth Fetch Utility - Guarantees JSON parsing and prevents HTML syntax errors
 const safeFetchAuth = async (endpoint, options = {}) => {
   const primaryUrl = `${API_BASE}${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`;
+  const headers = {
+    'bypass-tunnel-reminder': 'true',
+    'ngrok-skip-browser-warning': 'true',
+    ...(options.headers || {})
+  };
+  const requestOptions = { ...options, headers };
   let res;
 
   try {
-    res = await fetch(primaryUrl, options);
+    res = await fetch(primaryUrl, requestOptions);
   } catch (err) {
     // Fallback to relative URL if primary fails
     try {
-      res = await fetch(`/api${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`, options);
+      res = await fetch(`/api${endpoint.startsWith('/') ? endpoint : '/' + endpoint}`, requestOptions);
     } catch (fallbackErr) {
       throw new Error('Failed to connect to backend API server. Ensure backend is running.');
     }

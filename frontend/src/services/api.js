@@ -5,13 +5,23 @@
 
 import { generateFloorLayoutLocally, validateLayoutLocal, customizeLayoutLocal } from './localLayoutEngine';
 
-const API_BASE = '/api';
+const API_BASE = import.meta.env.VITE_API_BASE || '/api';
+
+const getAuthHeaders = () => {
+  const token = localStorage.getItem('ai_house_planner_token');
+  return {
+    'Content-Type': 'application/json',
+    'bypass-tunnel-reminder': 'true',
+    'ngrok-skip-browser-warning': 'true',
+    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+  };
+};
 
 export const parseRequirements = async (text) => {
   try {
     const res = await fetch(`${API_BASE}/ai/parse-requirements`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ text })
     });
     if (res.ok) {
@@ -30,7 +40,7 @@ export const generateLayout = async ({ plot, selectedFloors, floorRequirements, 
   try {
     const res = await fetch(`${API_BASE}/layout/generate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ plot, selectedFloors, floorRequirements, rooms })
     });
     if (res.ok) {
@@ -51,7 +61,7 @@ export const validateLayout = async (layout) => {
   try {
     const res = await fetch(`${API_BASE}/layout/validate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ layout })
     });
     if (res.ok) {
@@ -69,7 +79,7 @@ export const customizeLayout = async (layout, command) => {
   try {
     const res = await fetch(`${API_BASE}/layout/customize`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ layout, command })
     });
     if (res.ok) {
@@ -85,13 +95,7 @@ export const customizeLayout = async (layout, command) => {
   return customizeLayoutLocal(layout, command);
 };
 
-const getAuthHeaders = () => {
-  const token = localStorage.getItem('ai_house_planner_token');
-  return {
-    'Content-Type': 'application/json',
-    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-  };
-};
+
 
 export const saveProject = async (projectData) => {
   try {
