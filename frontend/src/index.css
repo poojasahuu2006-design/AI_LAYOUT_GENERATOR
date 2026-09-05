@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --color-bg-light: #f8fafc;
+    --color-surface-white: #ffffff;
+    --color-border-slate: #e2e8f0;
+    --color-text-dark: #0f172a;
+    --color-text-muted: #64748b;
+    --color-accent-blue: #0284c7;
+    --color-accent-teal: #0d9488;
+  }
+  
+  body {
+    @apply bg-slate-50 text-slate-900 font-sans antialiased selection:bg-sky-500 selection:text-white;
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+    background-color: #f8fafc;
+  }
+
+  #root {
+    width: 100%;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+/* Custom scrollbars for clean light UI */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Light Architectural Grid Pattern */
+.bg-architect-grid-light {
+  background-color: #f8fafc;
+  background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Light Blueprint Grid Pattern */
+.bg-blueprint-light {
+  background-color: #f0fdf4;
+  background-image: 
+    linear-gradient(rgba(14, 165, 233, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(14, 165, 233, 0.08) 1px, transparent 1px),
+    linear-gradient(rgba(14, 165, 233, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(14, 165, 233, 0.04) 1px, transparent 1px);
+  background-size: 40px 40px, 40px 40px, 10px 10px, 10px 10px;
+}
+
+/* SaaS Light Glass Panels */
+.saas-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05);
+}
+
+.saas-card-hover {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.saas-card-hover:hover {
+  border-color: #0284c7;
+  box-shadow: 0 10px 15px -3px rgba(14, 165, 233, 0.08), 0 4px 6px -4px rgba(14, 165, 233, 0.04);
+  transform: translateY(-2px);
+}
