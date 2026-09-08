@@ -1,7 +1,11 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 
 const AuthContext = createContext();
-const API_BASE = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_URL || 'https://honest-spies-pull.loca.lt/api';
+const API_BASE = import.meta.env.VITE_API_BASE || 
+  import.meta.env.VITE_API_URL || 
+  (typeof window !== 'undefined' && window.location.hostname.includes('onrender.com') 
+    ? 'https://ai-house-planner-backend.onrender.com/api' 
+    : 'http://localhost:5000/api');
 
 // Safe Auth Fetch Utility - Guarantees JSON parsing and prevents HTML syntax errors
 const safeFetchAuth = async (endpoint, options = {}) => {

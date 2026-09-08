@@ -5,7 +5,11 @@
 
 import { generateFloorLayoutLocally, validateLayoutLocal, customizeLayoutLocal } from './localLayoutEngine';
 
-const API_BASE = import.meta.env.VITE_API_BASE || '/api';
+const API_BASE = import.meta.env.VITE_API_BASE || 
+  import.meta.env.VITE_API_URL || 
+  (typeof window !== 'undefined' && window.location.hostname.includes('onrender.com') 
+    ? 'https://ai-house-planner-backend.onrender.com/api' 
+    : 'http://localhost:5000/api');
 
 const getAuthHeaders = () => {
   const token = localStorage.getItem('ai_house_planner_token');
