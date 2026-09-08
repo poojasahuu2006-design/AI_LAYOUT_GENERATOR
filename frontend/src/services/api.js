@@ -21,13 +21,26 @@ const getAuthHeaders = () => {
   };
 };
 
+const fetchWithTimeout = async (url, options = {}, timeoutMs = 2500) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(timer);
+    return res;
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
+  }
+};
+
 export const parseRequirements = async (text) => {
   try {
-    const res = await fetch(`${API_BASE}/ai/parse-requirements`, {
+    const res = await fetchWithTimeout(`${API_BASE}/ai/parse-requirements`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({ text })
-    });
+    }, 2500);
     if (res.ok) {
       const json = await res.json();
       if (json.data) return json.data;
@@ -42,11 +55,11 @@ export const parseRequirements = async (text) => {
 
 export const generateLayout = async ({ plot, selectedFloors, floorRequirements, rooms }) => {
   try {
-    const res = await fetch(`${API_BASE}/layout/generate`, {
+    const res = await fetchWithTimeout(`${API_BASE}/layout/generate`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({ plot, selectedFloors, floorRequirements, rooms })
-    });
+    }, 2500);
     if (res.ok) {
       const json = await res.json();
       if (json.layout && json.layout.floors && json.layout.floors.some(f => f.rooms && f.rooms.length > 0)) {
@@ -54,7 +67,7 @@ export const generateLayout = async ({ plot, selectedFloors, floorRequirements, 
       }
     }
   } catch (err) {
-    console.warn('[Backend layout API fetch failed, activating local layout engine fallback]:', err);
+    console.warn('[Backend layout API fetch slow/offline, activating instant local layout engine]:', err);
   }
 
   // Fallback to local layout engine
@@ -63,11 +76,11 @@ export const generateLayout = async ({ plot, selectedFloors, floorRequirements, 
 
 export const validateLayout = async (layout) => {
   try {
-    const res = await fetch(`${API_BASE}/layout/validate`, {
+    const res = await fetchWithTimeout(`${API_BASE}/layout/validate`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({ layout })
-    });
+    }, 2000);
     if (res.ok) {
       const json = await res.json();
       return json.validation;
@@ -81,11 +94,11 @@ export const validateLayout = async (layout) => {
 
 export const customizeLayout = async (layout, command) => {
   try {
-    const res = await fetch(`${API_BASE}/layout/customize`, {
+    const res = await fetchWithTimeout(`${API_BASE}/layout/customize`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({ layout, command })
-    });
+    }, 2500);
     if (res.ok) {
       const json = await res.json();
       if (json.result) return json.result;
@@ -99,15 +112,13 @@ export const customizeLayout = async (layout, command) => {
   return customizeLayoutLocal(layout, command);
 };
 
-
-
 export const saveProject = async (projectData) => {
   try {
-    const res = await fetch(`${API_BASE}/projects`, {
+    const res = await fetchWithTimeout(`${API_BASE}/projects`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(projectData)
-    });
+    }, 2500);
     if (res.ok) return await res.json();
   } catch (err) {
     console.warn('[Save project offline, storing in localStorage]:', err);
@@ -123,9 +134,9 @@ export const saveProject = async (projectData) => {
 
 export const getProjects = async () => {
   try {
-    const res = await fetch(`${API_BASE}/projects`, {
+    const res = await fetchWithTimeout(`${API_BASE}/projects`, {
       headers: getAuthHeaders()
-    });
+    }, 2500);
     if (res.ok) return await res.json();
   } catch (err) {
     console.warn('[Get projects offline, fetching from localStorage]:', err);
@@ -137,10 +148,10 @@ export const getProjects = async () => {
 
 export const deleteProject = async (id) => {
   try {
-    const res = await fetch(`${API_BASE}/projects/${id}`, {
+    const res = await fetchWithTimeout(`${API_BASE}/projects/${id}`, {
       method: 'DELETE',
       headers: getAuthHeaders()
-    });
+    }, 2500);
     if (res.ok) return await res.json();
   } catch (err) {
     console.warn('[Delete project offline, removing from localStorage]:', err);
@@ -154,10 +165,10 @@ export const deleteProject = async (id) => {
 
 export const toggleFavoriteProject = async (id) => {
   try {
-    const res = await fetch(`${API_BASE}/projects/${id}/favorite`, {
+    const res = await fetchWithTimeout(`${API_BASE}/projects/${id}/favorite`, {
       method: 'PATCH',
       headers: getAuthHeaders()
-    });
+    }, 2500);
     if (res.ok) return await res.json();
   } catch (err) {
     console.warn('[Favorite project offline]:', err);
@@ -175,11 +186,11 @@ export const toggleFavoriteProject = async (id) => {
 
 export const renameProject = async (id, newName) => {
   try {
-    const res = await fetch(`${API_BASE}/projects/${id}`, {
+    const res = await fetchWithTimeout(`${API_BASE}/projects/${id}`, {
       method: 'PUT',
       headers: getAuthHeaders(),
       body: JSON.stringify({ projectName: newName })
-    });
+    }, 2500);
     if (res.ok) return await res.json();
   } catch (err) {
     console.warn('[Rename project offline]:', err);
