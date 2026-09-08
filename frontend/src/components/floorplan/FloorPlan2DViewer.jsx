@@ -143,6 +143,8 @@ export default function FloorPlan2DViewer({
       else if (room.type === 'Living Room') displayName = 'HALL';
       else if (room.type === 'Master Bedroom') displayName = 'MASTER BED';
       else if (room.type === 'Staircase') displayName = 'STAIRS';
+      else if (room.type === 'Hallway') displayName = 'HALLWAY';
+      else if (room.type === 'Store Room') displayName = 'STORE';
     }
 
     const titleSize = Math.min(1.4, Math.max(0.8, rw / (displayName.length * 0.75)));
@@ -369,13 +371,23 @@ export default function FloorPlan2DViewer({
               className="shadow-xl"
             />
 
-            {/* MAIN ENTRY INDICATOR (Front Exterior Wall y=0) */}
-            <g transform={`translate(${plotW / 2 - 4.5}, -2.2)`}>
-              <rect x="0" y="0" width="9" height="1.5" fill="#0284c7" rx="0.4" className="shadow-md" />
-              <text x="4.5" y="1.0" fill="#ffffff" fontSize="0.8" fontWeight="900" textAnchor="middle" className="font-sans tracking-widest">
-                ▲ MAIN ENTRY
-              </text>
-            </g>
+            {/* MAIN ENTRY INDICATOR — aligned to Living Room main entry door */}
+            {(() => {
+              const entryDoor = currentRooms
+                .flatMap((r) => (r.doors || []).map((d) => ({ room: r, door: d })))
+                .find(({ door }) => door.isMainEntry);
+              const badgeX = entryDoor
+                ? entryDoor.door.x + (entryDoor.door.width || 3.5) / 2 - 4.5
+                : plotW / 2 - 4.5;
+              return (
+                <g transform={`translate(${badgeX}, -2.2)`}>
+                  <rect x="0" y="0" width="9" height="1.5" fill="#0284c7" rx="0.4" className="shadow-md" />
+                  <text x="4.5" y="1.0" fill="#ffffff" fontSize="0.8" fontWeight="900" textAnchor="middle" className="font-sans tracking-widest">
+                    ▲ MAIN ENTRY
+                  </text>
+                </g>
+              );
+            })()}
 
             {/* Render Rooms */}
             {currentRooms.map((room) => {
@@ -524,22 +536,38 @@ export default function FloorPlan2DViewer({
                     />
                   )}
 
-                  {/* Doors Opening Cutout & Swing Arc */}
+                  {/* Doors — orientation-aware cutout + swing arc */}
                   {(room.doors || []).map((door, idx) => {
-                    const dw = Math.min(door.width || 3, rw - 0.5);
+                    const dw = door.width || 3;
+                    const wall = door.wall || 'north';
+                    const vertical = wall === 'east' || wall === 'west';
+                    const swing = door.swing_direction || (vertical ? 'in_right' : 'in_bottom');
+
+                    let rectProps;
+                    let arcPath;
+                    if (vertical) {
+                      rectProps = { x: door.x - 0.25, y: door.y, width: 0.5, height: dw };
+                      if (swing === 'in_left' || wall === 'east') {
+                        arcPath = `M ${door.x} ${door.y} A ${dw} ${dw} 0 0 0 ${door.x - dw} ${door.y + dw}`;
+                      } else {
+                        arcPath = `M ${door.x} ${door.y} A ${dw} ${dw} 0 0 1 ${door.x + dw} ${door.y + dw}`;
+                      }
+                    } else {
+                      rectProps = { x: door.x, y: door.y - 0.25, width: Math.min(dw, rw - 0.5), height: 0.5 };
+                      if (swing === 'in_top' || swing === 'north') {
+                        arcPath = `M ${door.x} ${door.y} A ${dw} ${dw} 0 0 0 ${door.x + dw} ${door.y - dw}`;
+                      } else {
+                        arcPath = `M ${door.x} ${door.y} A ${dw} ${dw} 0 0 1 ${door.x + dw} ${door.y + dw}`;
+                      }
+                    }
+
                     return (
                       <g key={idx}>
-                        <rect
-                          x={door.x}
-                          y={door.y - 0.25}
-                          width={dw}
-                          height="0.5"
-                          fill="#d97706"
-                        />
+                        <rect {...rectProps} fill={door.isMainEntry ? '#0284c7' : '#d97706'} />
                         <path
-                          d={`M ${door.x} ${door.y} A ${dw} ${dw} 0 0 1 ${door.x + dw} ${door.y + dw}`}
+                          d={arcPath}
                           fill="none"
-                          stroke="#d97706"
+                          stroke={door.isMainEntry ? '#0284c7' : '#d97706'}
                           strokeWidth="0.2"
                           strokeDasharray="0.4 0.2"
                         />

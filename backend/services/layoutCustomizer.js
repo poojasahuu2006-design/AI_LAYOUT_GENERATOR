@@ -5,6 +5,21 @@
 
 const { validateLayout } = require('./layoutValidator');
 
+const FIXED_NO_EXPAND = ['Bathroom', 'Washroom', 'Staircase', 'Hallway', 'Corridor', 'Balcony'];
+const HARD_MAX_AREA = {
+  Bathroom: 65,
+  Washroom: 45,
+  Staircase: 95,
+  Balcony: 65
+};
+
+function canExpandRoom(room, extraArea) {
+  if (FIXED_NO_EXPAND.includes(room.type)) return false;
+  const hard = HARD_MAX_AREA[room.type];
+  if (hard != null && room.area + extraArea > hard + 0.5) return false;
+  return true;
+}
+
 function fillSpaceAfterRemoval(floorObj, plotW, plotL, removedRoom) {
   const rooms = floorObj.rooms;
   if (!rooms || rooms.length === 0) return;
@@ -13,9 +28,14 @@ function fillSpaceAfterRemoval(floorObj, plotW, plotL, removedRoom) {
   const ry = removedRoom.y;
   const rw = removedRoom.width;
   const rh = removedRoom.height;
+  const gapArea = rw * rh;
+
+  const preferExpand = (r) =>
+    canExpandRoom(r, gapArea) &&
+    !FIXED_NO_EXPAND.includes(r.type);
 
   // 1. Try horizontal neighbor sharing same Y and height
-  let neighbor = rooms.find(r => Math.abs(r.y - ry) < 1 && Math.abs(r.height - rh) < 1 && (Math.abs(r.x + r.width - rx) < 1 || Math.abs(rx + rw - r.x) < 1));
+  let neighbor = rooms.find(r => preferExpand(r) && Math.abs(r.y - ry) < 1 && Math.abs(r.height - rh) < 1 && (Math.abs(r.x + r.width - rx) < 1 || Math.abs(rx + rw - r.x) < 1));
   if (neighbor) {
     if (neighbor.x + neighbor.width <= rx + 1) {
       neighbor.width = Math.round((neighbor.width + rw) * 10) / 10;
@@ -30,7 +50,7 @@ function fillSpaceAfterRemoval(floorObj, plotW, plotL, removedRoom) {
   }
 
   // 2. Try vertical neighbor sharing same X and width
-  neighbor = rooms.find(r => Math.abs(r.x - rx) < 1 && Math.abs(r.width - rw) < 1 && (Math.abs(r.y + r.height - ry) < 1 || Math.abs(ry + rh - r.y) < 1));
+  neighbor = rooms.find(r => preferExpand(r) && Math.abs(r.x - rx) < 1 && Math.abs(r.width - rw) < 1 && (Math.abs(r.y + r.height - ry) < 1 || Math.abs(ry + rh - r.y) < 1));
   if (neighbor) {
     if (neighbor.y + neighbor.height <= ry + 1) {
       neighbor.height = Math.round((neighbor.height + rh) * 10) / 10;
@@ -44,15 +64,18 @@ function fillSpaceAfterRemoval(floorObj, plotW, plotL, removedRoom) {
     return;
   }
 
-  // 3. Fallback: Find adjacent room touching removedRoom boundaries and expand it
-  let adjRoom = rooms.find(r => (
+  // 3. Fallback: expand adjacent HIGH/MEDIUM room, else create Storage
+  let adjRoom = rooms.find(r => preferExpand(r) && ((
     r.x < rx + rw && r.x + r.width > rx && (Math.abs(r.y + r.height - ry) < 1 || Math.abs(r.y - (ry + rh)) < 1)
   ) || (
     r.y < ry + rh && r.y + r.height > ry && (Math.abs(r.x + r.width - rx) < 1 || Math.abs(r.x - (rx + rw)) < 1)
-  ));
+  )));
 
   if (!adjRoom) {
-    adjRoom = rooms.reduce((max, r) => (r.area > max.area ? r : max), rooms[0]);
+    const flex = rooms.filter(preferExpand);
+    if (flex.length) {
+      adjRoom = flex.reduce((max, r) => (r.area > max.area ? r : max), flex[0]);
+    }
   }
 
   if (adjRoom) {
@@ -71,16 +94,58 @@ function fillSpaceAfterRemoval(floorObj, plotW, plotL, removedRoom) {
     }
     adjRoom.area = Math.round(adjRoom.width * adjRoom.height * 10) / 10;
     updateRoomDoorsAndWindows(adjRoom, plotW, plotL);
+    return;
+  }
+
+  // Never dump into bathroom — expand HIGH/MEDIUM neighbor only (no invented Storage)
+  const HIGH_MED = ['Living Room', 'Hall', 'Foyer', 'Master Bedroom', 'Bedroom', 'Dining Room', 'Kitchen', 'Study Room'];
+  const flex = rooms.filter((r) => HIGH_MED.includes(r.type));
+  if (flex.length) {
+    const grow = flex.reduce((max, r) => (r.area > max.area ? r : max), flex[0]);
+    if (rx >= grow.x + grow.width - 1) {
+      grow.width = Math.min(plotW - grow.x, Math.round((grow.width + rw) * 10) / 10);
+    } else if (ry >= grow.y + grow.height - 1) {
+      grow.height = Math.min(plotL - grow.y, Math.round((grow.height + rh) * 10) / 10);
+    } else {
+      grow.width = Math.min(plotW - grow.x, Math.round((grow.width + rw * 0.5) * 10) / 10);
+      grow.height = Math.min(plotL - grow.y, Math.round((grow.height + rh * 0.5) * 10) / 10);
+    }
+    grow.area = Math.round(grow.width * grow.height * 10) / 10;
+    updateRoomDoorsAndWindows(grow, plotW, plotL);
   }
 }
 
 function updateRoomDoorsAndWindows(room, plotW, plotL) {
-  if (room.doors && room.doors.length > 0) {
-    room.doors[0].x = Math.max(room.x + 1, Math.min(room.x + room.width - 3, room.x + Math.floor(room.width / 2) - 1));
-    room.doors[0].y = room.y;
-  }
+  const CORNER = 0.5;
+  (room.doors || []).forEach((door) => {
+    if (door.isMainEntry) {
+      door.y = 0;
+      door.wall = 'south';
+      const dw = door.width || 3.5;
+      door.x = Math.max(
+        room.x + CORNER,
+        Math.min(room.x + room.width - CORNER - dw, room.x + room.width / 2 - dw / 2)
+      );
+      return;
+    }
+    const dw = door.width || 3;
+    if (door.wall === 'east' || door.wall === 'west') {
+      door.x = door.wall === 'west' ? room.x : room.x + room.width;
+      door.y = Math.max(
+        room.y + CORNER,
+        Math.min(room.y + room.height - CORNER - dw, room.y + room.height / 2 - dw / 2)
+      );
+    } else {
+      door.y = door.wall === 'north' ? room.y : room.y + room.height;
+      if (door.wall === 'south' && room.y < 0.5) door.y = room.y + room.height;
+      door.x = Math.max(
+        room.x + CORNER,
+        Math.min(room.x + room.width - CORNER - dw, room.x + room.width / 2 - dw / 2)
+      );
+    }
+  });
   if (room.windows && room.windows.length > 0) {
-    room.windows[0].x = Math.max(room.x + 1, Math.min(room.x + room.width - 3, room.x + Math.floor(room.width / 2) - 1));
+    room.windows[0].x = Math.max(room.x + CORNER, Math.min(room.x + room.width - 3, room.x + Math.floor(room.width / 2) - 1));
     if (room.y <= 1) room.windows[0].y = 0;
     else if (room.y + room.height >= plotL - 1) room.windows[0].y = plotL;
     else room.windows[0].y = room.y + room.height;

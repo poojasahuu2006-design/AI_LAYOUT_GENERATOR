@@ -1,7 +1,10 @@
 /**
  * Multi-Floor Space Validation Engine
- * Validates Ground Floor and First Floor constraints, boundary limits, room overlaps, and NBC 2016 / IS 3861 standards.
+ * Validates boundaries, zero overlaps, NBC room sizes, entrance topology, and area proportions.
  */
+
+const { findSharedWallSegment } = require('./geometrySolver');
+const { validateAreaCaps } = require('./areaAllocator');
 
 function validateLayout(layout) {
   const errors = [];
@@ -23,44 +26,77 @@ function validateLayout(layout) {
   }
 
   let totalAllRoomsArea = 0;
+  const BED_TYPES = ['Bedroom', 'Master Bedroom', 'Study Room'];
+  const ENTRY_TYPES = ['Living Room', 'Hall', 'Foyer', 'Dining Room', 'Kitchen'];
+  const CORNER_OFFSET = 0.4;
+  const areaChecklists = [];
 
-  floors.forEach(floorObj => {
+  floors.forEach((floorObj) => {
     const floorName = floorObj.floor === 'ground' ? 'Ground Floor' : 'First Floor';
     const rooms = floorObj.rooms || [];
     let floorRoomArea = 0;
 
-    // 1. Boundary & NBC 2016 Minimum Dimension Checks
-    rooms.forEach(room => {
+    // Hard area-cap validation
+    const capResult = validateAreaCaps(rooms, plotW, plotL);
+    areaChecklists.push({ floor: floorObj.floor, report: capResult.report });
+    if (!capResult.ok) {
+      capResult.failures.forEach((f) => {
+        errors.push(`[${floorName}] Area allocation cap failed: ${f}`);
+      });
+    }
+
+    rooms.forEach((room) => {
       if (room.width <= 0 || room.height <= 0) {
         errors.push(`[${floorName}] Room "${room.name}" has invalid zero or negative dimensions.`);
       }
 
-      if (room.x < -0.1 || room.y < -0.1 || (room.x + room.width) > (plotW + 0.1) || (room.y + room.height) > (plotL + 0.1)) {
-        errors.push(`[${floorName}] Room "${room.name}" exceeds the plot boundary (${plotW} × ${plotL} ${layout.plot.unit || 'ft'}).`);
+      if (
+        room.x < -0.1 ||
+        room.y < -0.1 ||
+        room.x + room.width > plotW + 0.1 ||
+        room.y + room.height > plotL + 0.1
+      ) {
+        errors.push(
+          `[${floorName}] Room "${room.name}" exceeds the plot boundary (${plotW} × ${plotL} ${layout.plot.unit || 'ft'}).`
+        );
       }
 
-      const roomArea = Math.round((room.width * room.height) * 10) / 10;
+      const roomArea = Math.round(room.width * room.height * 10) / 10;
       floorRoomArea += roomArea;
 
-      // NBC 2016 - Part 3 Minimum Room Area & Dimension Checks
-      if (room.type === 'Bedroom' || room.type === 'Master Bedroom') {
-        if (roomArea < 90 || room.width < 7.8 || room.height < 7.8) {
-          warnings.push(`[NBC 2016 - Part 3 Warning] "${room.name}" (${room.width}×${room.height} ft, ${roomArea} sq.ft) is below NBC minimum 9.5 sq.m (approx 90 sq.ft) recommendation.`);
-        }
-      } else if (room.type === 'Kitchen') {
-        if (roomArea < 50 || room.width < 5.8 || room.height < 5.8) {
-          warnings.push(`[NBC 2016 - Part 3 Warning] Kitchen "${room.name}" (${room.width}×${room.height} ft) is below NBC minimum 5.0 sq.m (approx 50 sq.ft) recommendation.`);
-        }
-      } else if (room.type === 'Bathroom' || room.type === 'Washroom') {
-        if (roomArea < 18 || room.width < 3.8 || room.height < 3.8) {
-          warnings.push(`[NBC 2016 - Part 3 Warning] Bathroom "${room.name}" (${room.width}×${room.height} ft) is below NBC minimum 1.8 sq.m recommendation.`);
+      if (room.type === 'Bathroom' && roomArea > 65.5) {
+        errors.push(
+          `[${floorName}] Bathroom "${room.name}" area ${roomArea} sq.ft exceeds practical max 65 sq.ft.`
+        );
+      }
+      if (room.type === 'Washroom' && roomArea > 45.5) {
+        errors.push(
+          `[${floorName}] Washroom "${room.name}" area ${roomArea} sq.ft exceeds practical max 45 sq.ft.`
+        );
+      }
+      if (room.type === 'Staircase' && roomArea > 95.5) {
+        errors.push(
+          `[${floorName}] Stairs "${room.name}" area ${roomArea} sq.ft exceeds max 95 sq.ft.`
+        );
+      }
+
+      if (room.exterior_required || BED_TYPES.includes(room.type) || ['Living Room', 'Hall'].includes(room.type)) {
+        const touches =
+          room.y <= 0.2 ||
+          room.x <= 0.2 ||
+          room.y + room.height >= plotL - 0.2 ||
+          room.x + room.width >= plotW - 0.2;
+        if (!touches) {
+          warnings.push(
+            `[${floorName}] "${room.name}" is positioned internally without an exterior wall.`
+          );
         }
       }
     });
 
     totalAllRoomsArea += floorRoomArea;
 
-    // 2. Overlap check between room rectangles on the SAME floor
+    // Zero Overlap Check
     for (let i = 0; i < rooms.length; i++) {
       for (let j = i + 1; j < rooms.length; j++) {
         const r1 = rooms[i];
@@ -74,14 +110,36 @@ function validateLayout(layout) {
         );
 
         if (isOverlapping) {
-          errors.push(`[${floorName}] Overlapping collision detected between "${r1.name}" and "${r2.name}".`);
+          errors.push(
+            `[${floorName}] Overlapping collision detected between "${r1.name}" and "${r2.name}".`
+          );
         }
+      }
+    }
+
+    // Main Entrance Check on Ground Floor
+    if (floorObj.floor === 'ground' && rooms.length > 0) {
+      const mainDoors = rooms.flatMap((r) =>
+        (r.doors || []).filter((d) => d.isMainEntry).map((d) => ({ room: r, door: d }))
+      );
+      if (mainDoors.length === 0) {
+        warnings.push(`[${floorName}] No MAIN ENTRY door found on front entrance wall.`);
+      } else {
+        mainDoors.forEach(({ room }) => {
+          if (room.type === 'Bathroom' || room.type === 'Washroom') {
+            errors.push(
+              `[${floorName}] Main entrance directly opens into "${room.name}". Must open into a common/habitable room.`
+            );
+          }
+        });
       }
     }
 
     const totalPlotArea = plotW * plotL;
     if (floorRoomArea > totalPlotArea + 1) {
-      errors.push(`Your requirements on ${floorName} cannot comfortably fit within the available ${plotW} × ${plotL} ${layout.plot.unit || 'ft'} space.`);
+      errors.push(
+        `Total room area on ${floorName} exceeds available plot size.`
+      );
     }
   });
 
@@ -91,10 +149,11 @@ function validateLayout(layout) {
     isValid,
     errors,
     warnings,
+    areaChecklists,
     summary: {
       plotDimensions: `${plotW} × ${plotL} ${layout.plot.unit || 'ft'}`,
       floorsCount: floors.length,
-      totalPlotArea: Math.round((plotW * plotL) * 10) / 10,
+      totalPlotArea: Math.round(plotW * plotL * 10) / 10,
       totalBuiltUpArea: Math.round(totalAllRoomsArea * 10) / 10
     }
   };
