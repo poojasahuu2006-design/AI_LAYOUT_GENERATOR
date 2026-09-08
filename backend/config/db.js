@@ -4,9 +4,13 @@ let isInMemoryFallback = false;
 let inMemoryProjects = new Map();
 
 const connectDB = async () => {
-  const connString = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/ai_house_planner';
+  const connString = process.env.MONGO_URI || process.env.MONGODB_URI;
+  if (!connString) {
+    console.log('[Database] No MongoDB URI provided. Using reliable in-memory data store.');
+    isInMemoryFallback = true;
+    return;
+  }
   try {
-    // Attempt connecting to MongoDB with a short timeout
     await mongoose.connect(connString, {
       serverSelectionTimeoutMS: 2000
     });
