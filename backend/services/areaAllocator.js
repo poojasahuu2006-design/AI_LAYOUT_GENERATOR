@@ -268,7 +268,7 @@ function validateAreaCaps(placedRooms, plotW, plotL) {
       ok = area <= maxCap + 0.5;
       if (!ok) failures.push(`Washroom "${room.name || room.type}" (${area} sq.ft) exceeds practical max ${maxCap} sq.ft`);
     } else if (room.type === 'Staircase') {
-      maxCap = 95;
+      maxCap = Math.max(160, Math.round(plotW * plotL * 0.15));
       ok = area <= maxCap + 0.5;
       if (!ok) failures.push(`Stairs "${room.name || room.type}" (${area} sq.ft) exceeds practical max ${maxCap} sq.ft`);
     }

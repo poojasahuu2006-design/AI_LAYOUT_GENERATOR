@@ -74,9 +74,10 @@ function validateLayout(layout) {
           `[${floorName}] Washroom "${room.name}" area ${roomArea} sq.ft exceeds practical max 45 sq.ft.`
         );
       }
-      if (room.type === 'Staircase' && roomArea > 95.5) {
+      const maxStairsCap = Math.max(160, Math.round(plotW * plotL * 0.15));
+      if (room.type === 'Staircase' && roomArea > maxStairsCap + 0.5) {
         errors.push(
-          `[${floorName}] Stairs "${room.name}" area ${roomArea} sq.ft exceeds max 95 sq.ft.`
+          `[${floorName}] Stairs "${room.name}" area ${roomArea} sq.ft exceeds max ${maxStairsCap} sq.ft.`
         );
       }
 

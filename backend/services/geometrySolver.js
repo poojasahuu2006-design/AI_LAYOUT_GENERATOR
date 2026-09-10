@@ -189,7 +189,17 @@ function generateFrontToBackLayout(
   kitchens.forEach((k) => frontRooms.push(k));
   poojas.forEach((p) => frontRooms.push(p));
 
-  const rearRooms = [...diningRooms, ...bedrooms, ...bathrooms, ...balconies, ...utilities, ...staircases];
+  // If no living/kitchen in front (e.g. first floor), assign Master Bedroom and front Balcony to front zone
+  if (frontRooms.length === 0 && bedrooms.length > 1) {
+    const master = bedrooms.find((b) => b.type === 'Master Bedroom') || bedrooms[0];
+    frontRooms.push(master);
+    if (balconies.length > 0) {
+      frontRooms.push(balconies[0]);
+    }
+  }
+
+  const placedFrontIds = new Set(frontRooms.map((r) => r.id));
+  const rearRooms = roomList.filter((r) => !placedFrontIds.has(r.id));
 
   if (rearRooms.length === 0) {
     return sliceBandHorizontally(frontRooms, 0, 0, W, L, floorLevel);
@@ -200,7 +210,7 @@ function generateFrontToBackLayout(
   }
 
   const frontTargetAreaSum = frontRooms.reduce((s, r) => s + (r.targetArea || 100), 0);
-  let frontH = round1(Math.min(L * 0.55, Math.max(L * 0.28, frontTargetAreaSum / W)));
+  let frontH = round1(Math.min(L * 0.48, Math.max(L * 0.28, frontTargetAreaSum / W)));
   const rearH = round1(L - frontH);
 
   if (frontRooms.length === 1) {
@@ -213,6 +223,14 @@ function generateFrontToBackLayout(
 
     placed.push(createRoomRect(living, 0, 0, livingW, frontH, floorLevel));
     placed.push(...sliceBandVertically(otherFront, livingW, 0, eastW, frontH, floorLevel));
+  } else if (frontRooms.length === 2 && frontRooms.some(r => r.type === 'Balcony')) {
+    const bal = frontRooms.find(r => r.type === 'Balcony');
+    const bed = frontRooms.find(r => r.id !== bal.id);
+    const balW = round1(Math.min(W * 0.32, Math.max(6.0, (bal.targetArea || 45) / frontH)));
+    const bedW = round1(W - balW);
+
+    placed.push(createRoomRect(bed, 0, 0, bedW, frontH, floorLevel));
+    placed.push(createRoomRect(bal, bedW, 0, balW, frontH, floorLevel));
   } else {
     placed.push(...sliceBandHorizontally(frontRooms, 0, 0, W, frontH, floorLevel));
   }
@@ -282,11 +300,14 @@ function partitionSpace(rooms, rx, ry, rw, rh, floorLevel) {
     }
   }
 
+  // Single habitable + Single service
   if (habitable.length === 1 && service.length === 1) {
     const sRoom = service[0];
     const sTarget = sRoom.targetArea || 38;
-    const maxW = sRoom.type === 'Staircase' ? Math.min(rw * 0.45, 9.0) : Math.min(rw * 0.35, 6.5);
-    const sw = round1(Math.max(sRoom.minW || 4.5, Math.min(maxW, sTarget / rh)));
+    const maxCap = sRoom.type === 'Bathroom' ? 58 : (sRoom.type === 'Washroom' ? 40 : 120);
+    const maxAllowedW = maxCap / rh;
+    const maxW = sRoom.type === 'Staircase' ? Math.min(rw * 0.45, 9.5) : Math.min(rw * 0.35, Math.min(6.5, maxAllowedW));
+    const sw = round1(Math.max(3.5, Math.min(maxW, sTarget / rh)));
     const habW = round1(rw - sw);
 
     return [
@@ -295,47 +316,96 @@ function partitionSpace(rooms, rx, ry, rw, rh, floorLevel) {
     ];
   }
 
+  // Calculate target heights
   const serviceTargetSum = service.reduce((s, r) => s + (r.targetArea || 40), 0);
-  const serviceH = round1(Math.min(rh * 0.45, Math.max(5.5, Math.min(8.5, Math.sqrt(serviceTargetSum)))));
+  const idealH = Math.max(5.5, Math.min(6.8, serviceTargetSum / rw));
+  const serviceH = round1(Math.min(rh * 0.40, idealH));
   const habitableH = round1(rh - serviceH);
-
-  let serviceWidths = service.map((sRoom) => {
-    const target = sRoom.targetArea || 40;
-    const maxW = sRoom.type === 'Staircase' ? 9.5 : 6.5;
-    const minW = sRoom.minW || 4.5;
-    return round1(Math.max(minW, Math.min(maxW, target / serviceH)));
-  });
-
-  let totalServiceW = round1(serviceWidths.reduce((s, w) => s + w, 0));
-  if (totalServiceW > rw - 5) {
-    totalServiceW = round1(rw - 5);
-    const sumW = serviceWidths.reduce((s, w) => s + w, 0) || 1;
-    const scale = totalServiceW / sumW;
-    serviceWidths = serviceWidths.map((w) => round1(w * scale));
-  }
-
-  const placed = [];
   const serviceY = round1(ry + habitableH);
 
-  const topHabitable = habitable.slice(0, Math.max(1, habitable.length - 1));
-  const bottomHabitable = habitable.length > 1 ? habitable[habitable.length - 1] : habitable[0];
-
-  placed.push(...sliceBandHorizontally(topHabitable, rx, ry, rw, habitableH, floorLevel));
-
-  const bottomHabW = round1(rw - totalServiceW);
-  if (habitable.length > 1) {
-    placed.push(createRoomRect(bottomHabitable, rx, serviceY, bottomHabW, serviceH, floorLevel));
-  } else {
-    placed.push(createRoomRect(habitable[0], rx, serviceY, bottomHabW, serviceH, floorLevel));
-  }
-
-  let cx = round1(rx + bottomHabW);
-  service.forEach((sRoom, idx) => {
-    const sw = idx === service.length - 1 ? round1(rx + rw - cx) : serviceWidths[idx];
-    placed.push(createRoomRect(sRoom, cx, serviceY, sw, serviceH, floorLevel));
-    cx = round1(cx + sw);
+  // Calculate capped widths for service rooms
+  const serviceRects = service.map((sRoom) => {
+    let sw;
+    if (sRoom.type === 'Bathroom' || sRoom.type === 'Washroom') {
+      sw = round1(Math.max(4.5, Math.min(6.5, (sRoom.targetArea || 40) / serviceH)));
+    } else if (sRoom.type === 'Pooja Room') {
+      sw = round1(Math.max(4.0, Math.min(6.0, (sRoom.targetArea || 30) / serviceH)));
+    } else if (sRoom.type === 'Staircase') {
+      sw = round1(Math.max(7.0, Math.min(14.0, (sRoom.targetArea || 80) / serviceH)));
+    } else {
+      sw = round1(Math.max(4.5, (sRoom.targetArea || 40) / serviceH));
+    }
+    return { room: sRoom, width: sw };
   });
 
+  const totalFixedServiceW = round1(serviceRects.reduce((s, r) => s + r.width, 0));
+  const remainingRowW = round1(rw - totalFixedServiceW);
+
+  // If there are multiple service rooms (e.g. Balcony + Staircase + Bath)
+  const flexService = serviceRects.filter((s) => ['Balcony', 'Staircase', 'Utility Room', 'Store Room'].includes(s.room.type));
+
+  if (flexService.length > 0 && totalFixedServiceW >= rw * 0.45) {
+    const placed = [];
+    placed.push(...sliceBandHorizontally(habitable, rx, ry, rw, habitableH, floorLevel));
+
+    // Expand flexible rooms only so bathrooms remain within caps
+    const extraPerFlex = round1(remainingRowW / flexService.length);
+    flexService.forEach((s) => {
+      s.width = round1(s.width + extraPerFlex);
+    });
+    const currentSum = serviceRects.reduce((sum, s) => sum + s.width, 0);
+    const last = serviceRects[serviceRects.length - 1];
+    last.width = round1(last.width + (rw - currentSum));
+
+    let cx = rx;
+    serviceRects.forEach((s, idx) => {
+      const sw = idx === serviceRects.length - 1 ? round1(rx + rw - cx) : s.width;
+      placed.push(createRoomRect(s.room, cx, serviceY, sw, serviceH, floorLevel));
+      cx = round1(cx + sw);
+    });
+    return placed;
+  }
+
+  // If only small service room(s) (e.g. 1 Bath) and multiple habitable rooms (e.g. Bed 1 + Bed 2)
+  if (habitable.length > 1 && remainingRowW >= 8.0) {
+    const placed = [];
+    const topHabitable = habitable.slice(0, habitable.length - 1);
+    const bottomHabitable = habitable[habitable.length - 1];
+
+    placed.push(...sliceBandHorizontally(topHabitable, rx, ry, rw, habitableH, floorLevel));
+    placed.push(createRoomRect(bottomHabitable, rx, serviceY, remainingRowW, serviceH, floorLevel));
+
+    let cx = round1(rx + remainingRowW);
+    serviceRects.forEach((s, idx) => {
+      const sw = idx === serviceRects.length - 1 ? round1(rx + rw - cx) : s.width;
+      placed.push(createRoomRect(s.room, cx, serviceY, sw, serviceH, floorLevel));
+      cx = round1(cx + sw);
+    });
+    return placed;
+  }
+
+  // Single habitable + multiple service: split vertically
+  if (habitable.length === 1) {
+    const sTargetSum = service.reduce((s, r) => s + (r.targetArea || 40), 0);
+    const servW = round1(Math.max(6.0, Math.min(rw * 0.42, sTargetSum / rh)));
+    const habW = round1(rw - servW);
+
+    return [
+      createRoomRect(habitable[0], rx, ry, habW, rh, floorLevel),
+      ...sliceBandVertically(service, round1(rx + habW), ry, servW, rh, floorLevel)
+    ];
+  }
+
+  // Default fallback
+  const placed = [];
+  placed.push(...sliceBandHorizontally(habitable, rx, ry, rw, habitableH, floorLevel));
+  const sumW = serviceRects.reduce((s, r) => s + r.width, 0) || 1;
+  let cx = rx;
+  serviceRects.forEach((s, idx) => {
+    const sw = idx === serviceRects.length - 1 ? round1(rx + rw - cx) : round1(s.width * (rw / sumW));
+    placed.push(createRoomRect(s.room, cx, serviceY, sw, serviceH, floorLevel));
+    cx = round1(cx + sw);
+  });
   return placed;
 }
 

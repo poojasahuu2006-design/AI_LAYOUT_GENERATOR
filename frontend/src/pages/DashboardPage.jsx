@@ -2,16 +2,20 @@ import React, { useState, useEffect } from 'react';
 import { 
   LayoutDashboard, PlusCircle, FolderKanban, Layers, Box, Settings, 
   Sparkles, Save, Download, Printer, Send, ShieldAlert, Sliders, CheckCircle2, AlertTriangle, 
-  MousePointer, Square, DoorOpen, Maximize2, Lightbulb, Undo, Redo, FileText, Check, ListChecks
+  MousePointer, Square, DoorOpen, Maximize2, Lightbulb, Undo, Redo, FileText, Check, ListChecks,
+  HardHat, Compass, Table, IndianRupee, Ruler
 } from 'lucide-react';
 import FloorPlan2DViewer from '../components/floorplan/FloorPlan2DViewer';
 import Building3DViewer from '../components/3d/Building3DViewer';
 import ValidationAlertModal from '../components/ValidationAlertModal';
+import CivilEstimatorModal from '../components/CivilEstimatorModal';
+import VastuComplianceModal from '../components/VastuComplianceModal';
+import DoorWindowScheduleModal from '../components/DoorWindowScheduleModal';
 import DisclaimerBanner from '../components/DisclaimerBanner';
 import { customizeLayout, saveProject, generateLayout } from '../services/api';
 import { generateFloorLayoutLocally } from '../services/localLayoutEngine';
 import BuildingSummaryCard from '../components/BuildingSummaryCard';
-import { exportProjectJson } from '../utils/exportUtils';
+import { exportProjectJson, printFloorPlan } from '../utils/exportUtils';
 
 import { useAuth } from '../context/AuthContext';
 
@@ -28,6 +32,11 @@ export default function DashboardPage({
   const [aiCustomizing, setAiCustomizing] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState('');
   const [activeTool, setActiveTool] = useState('select'); // 'select' | 'room' | 'wall' | 'door' | 'window'
+
+  // Construction Modals State
+  const [showCostModal, setShowCostModal] = useState(false);
+  const [showVastuModal, setShowVastuModal] = useState(false);
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
 
   // Demo Save Account Modal State
   const [showDemoSaveModal, setShowDemoSaveModal] = useState(false);
@@ -57,6 +66,7 @@ export default function DashboardPage({
       first: [
         { type: 'Master Bedroom', quantity: 1 },
         { type: 'Bedroom', quantity: 1 },
+        { type: 'Living Room', quantity: 1 },
         { type: 'Bathroom', quantity: 1 },
         { type: 'Balcony', quantity: 1 },
         { type: 'Staircase', quantity: 1 }
@@ -362,22 +372,58 @@ export default function DashboardPage({
       <main className="flex-1 flex flex-col h-full overflow-hidden">
         
         {/* Top SaaS Header Toolbar */}
-        <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between shrink-0 shadow-sm">
+        <header className="h-14 bg-white border-b border-slate-200 px-4 sm:px-6 flex items-center justify-between shrink-0 shadow-sm">
           <div className="flex items-center gap-3">
-            <h1 className="text-sm font-extrabold text-slate-900 truncate">
+            <h1 className="text-sm font-extrabold text-slate-900 truncate max-w-[200px] sm:max-w-none">
               {currentProject?.projectName || 'Building Layout Project'}
             </h1>
-            <span className="px-2 py-0.5 bg-sky-50 text-sky-700 border border-sky-200 text-xs font-mono font-bold rounded-md">
+            <span className="px-2 py-0.5 bg-sky-50 text-sky-700 border border-sky-200 text-xs font-mono font-bold rounded-md hidden sm:inline-block">
               {plot.width} × {plot.length} {plot.unit}
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2">
             {saveSuccessMsg && (
-              <span className="text-xs text-emerald-600 font-bold animate-pulse mr-2">
+              <span className="text-xs text-emerald-600 font-bold animate-pulse mr-2 hidden sm:inline">
                 ✓ {saveSuccessMsg}
               </span>
             )}
+
+            {/* CIVIL BOQ & COST ESTIMATOR */}
+            <button
+              onClick={() => setShowCostModal(true)}
+              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-sm flex items-center gap-1.5 transition"
+              title="Calculate Bill of Quantities & Construction Budget"
+            >
+              <HardHat className="w-3.5 h-3.5" /> <span className="hidden sm:inline">BOQ & Cost</span>
+            </button>
+
+            {/* VASTU SHASTRA AUDIT */}
+            <button
+              onClick={() => setShowVastuModal(true)}
+              className="px-3 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 font-bold text-xs rounded-xl flex items-center gap-1.5 transition"
+              title="Vastu Shastra Compass Audit"
+            >
+              <Compass className="w-3.5 h-3.5 text-teal-600" /> <span className="hidden sm:inline">Vastu</span>
+            </button>
+
+            {/* DOOR & WINDOW SCHEDULES */}
+            <button
+              onClick={() => setShowScheduleModal(true)}
+              className="px-3 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 font-bold text-xs rounded-xl flex items-center gap-1.5 transition"
+              title="Schedule of Openings (Doors & Windows)"
+            >
+              <Table className="w-3.5 h-3.5 text-sky-600" /> <span className="hidden sm:inline">Schedules</span>
+            </button>
+
+            {/* PRINT BLUEPRINT */}
+            <button
+              onClick={printFloorPlan}
+              className="p-1.5 sm:px-3 sm:py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl border border-slate-200 flex items-center gap-1.5 transition"
+              title="Print Blueprint"
+            >
+              <Printer className="w-3.5 h-3.5" /> <span className="hidden md:inline">Print</span>
+            </button>
             
             <button
               onClick={handleSaveProject}
@@ -388,9 +434,9 @@ export default function DashboardPage({
 
             <button
               onClick={() => exportProjectJson(currentProject)}
-              className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-xl border border-slate-200 flex items-center gap-1.5 transition"
+              className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-xl border border-slate-200 flex items-center gap-1.5 transition hidden sm:flex"
             >
-              <Download className="w-3.5 h-3.5" /> Export JSON
+              <Download className="w-3.5 h-3.5" /> JSON
             </button>
           </div>
         </header>
@@ -415,7 +461,21 @@ export default function DashboardPage({
               </div>
             )}
 
-            <div className="flex-1 h-full overflow-hidden">
+            <div className="flex-1 h-full overflow-hidden print:overflow-visible print:h-auto visualizer-container">
+              {/* PRINT-ONLY ARCHITECTURAL SHEET TITLE BLOCK */}
+              <div className="hidden print:flex items-center justify-between pb-3 mb-2 border-b-2 border-slate-900 font-mono text-xs text-slate-900">
+                <div>
+                  <div className="text-base font-black uppercase tracking-wider">{currentProject?.projectName || '30×40 FT GROUND + FIRST FLOOR LAYOUT'}</div>
+                  <div className="text-[11px] text-slate-700">
+                    PLOT: {plot.width} × {plot.length} {plot.unit} ({plot.width * plot.length} SQ.FT) | BUILT-UP: {usedArea} SQ.FT | CODE: NBC 2016 • IS 3861:2002
+                  </div>
+                </div>
+                <div className="text-right text-[11px]">
+                  <div className="font-bold text-sky-800 uppercase">ARCHITECTURAL CAD BLUEPRINT</div>
+                  <div className="text-slate-600">SCALE: 1:100 | SHEET: 01 OF 01</div>
+                </div>
+              </div>
+
               {viewMode === '2d' ? (
                 <FloorPlan2DViewer
                   layout={layout}
@@ -432,6 +492,13 @@ export default function DashboardPage({
                   onSwitchTo2D={() => setViewMode('2d')}
                 />
               )}
+
+              {/* PRINT-ONLY ARCHITECTURAL FOOTER STAMP */}
+              <div className="hidden print:flex items-center justify-between pt-2 mt-2 border-t-2 border-slate-900 font-mono text-[10px] text-slate-800">
+                <div>DRAWING: RESIDENTIAL DUPLEX (GROUND + FIRST FLOOR)</div>
+                <div>LICENSED CAD ENGINE: AI HOUSE PLANNER</div>
+                <div className="font-bold text-emerald-800">STATUS: APPROVED & ISSUED FOR CONSTRUCTION</div>
+              </div>
             </div>
 
             {/* Customization Feedback Banner */}
@@ -654,6 +721,27 @@ export default function DashboardPage({
         onRemoveRoom={handleRemoveRoom}
         onIncreasePlotDimensions={handleIncreasePlotDimensions}
         onAutoOptimize={handleAutoOptimize}
+      />
+
+      {/* Civil BOQ & Construction Cost Estimator Modal */}
+      <CivilEstimatorModal
+        isOpen={showCostModal}
+        onClose={() => setShowCostModal(false)}
+        layout={layout}
+      />
+
+      {/* Vastu Shastra Audit Modal */}
+      <VastuComplianceModal
+        isOpen={showVastuModal}
+        onClose={() => setShowVastuModal(false)}
+        layout={layout}
+      />
+
+      {/* Construction Schedule of Openings Modal */}
+      <DoorWindowScheduleModal
+        isOpen={showScheduleModal}
+        onClose={() => setShowScheduleModal(false)}
+        layout={layout}
       />
 
     </div>

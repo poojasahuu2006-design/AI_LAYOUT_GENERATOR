@@ -41,37 +41,26 @@ export default function FloorPlan2DViewer({
   const groundFloor = floors.find(f => f.floor === 'ground') || { rooms: layout?.rooms || [] };
   const firstFloor = floors.find(f => f.floor === 'first') || { rooms: [] };
 
-  // Current active rooms to render based on active floor view selection
-  let currentRooms = [];
-  if (activeFloorView === 'ground') {
-    currentRooms = groundFloor.rooms || [];
-  } else if (activeFloorView === 'first') {
-    currentRooms = firstFloor.rooms || [];
-  } else {
-    // Combined view: Render both floors with opacity / offset
-    currentRooms = [
-      ...(groundFloor.rooms || []).map(r => ({ ...r, floorOverlay: 'ground' })),
-      ...(firstFloor.rooms || []).map(r => ({ ...r, floorOverlay: 'first' }))
-    ];
-  }
+  const isCombined = activeFloorView === 'combined';
+  const separationGap = 25;
 
   // Canvas scaling math
   const padding = 35;
-  const viewWidth = plotW + padding * 2;
-  const viewHeight = plotL + padding * 2;
+  const viewWidth = isCombined ? (plotW * 2 + separationGap + padding * 2) : (plotW + padding * 2);
+  const viewHeight = plotL + padding * 2 + 10;
 
   // Auto Fit-To-Screen on mount or layout change
   useEffect(() => {
     handleFitToScreen();
-  }, [plotW, plotL]);
+  }, [plotW, plotL, activeFloorView]);
 
   const handleFitToScreen = () => {
-    setZoom(1.0);
+    setZoom(isCombined ? 0.75 : 1.0);
     setPan({ x: 0, y: 0 });
   };
 
   const handleZoomIn = () => setZoom(prev => Math.min(2.5, prev + 0.2));
-  const handleZoomOut = () => setZoom(prev => Math.max(0.5, prev - 0.2));
+  const handleZoomOut = () => setZoom(prev => Math.max(0.4, prev - 0.2));
 
   // Pan handlers
   const handleMouseDown = (e) => {
@@ -95,7 +84,7 @@ export default function FloorPlan2DViewer({
 
       // Update room in layout state
       const updatedFloors = floors.map(f => {
-        if (f.floor === activeFloorView) {
+        if (f.floor === draggingRoom.floor) {
           return {
             ...f,
             rooms: f.rooms.map(r => r.id === draggingRoom.id ? { ...r, x: newX, y: newY } : r)
@@ -178,6 +167,356 @@ export default function FloorPlan2DViewer({
     return '#f8fafc';
   };
 
+  /**
+   * Render a Single Floor Plan Component at (offsetX, offsetY)
+   */
+  const renderFloorSheet = (floorType, floorRooms, offsetX, offsetY, floorTitle) => {
+    const isGround = floorType === 'ground';
+
+    // Calculate RCC Columns for this floor
+    const columnPoints = [];
+    const addedSet = new Set();
+    floorRooms.forEach((r) => {
+      const corners = [
+        [r.x, r.y],
+        [r.x + r.width, r.y],
+        [r.x, r.y + r.height],
+        [r.x + r.width, r.y + r.height]
+      ];
+      corners.forEach(([cx, cy]) => {
+        const key = `${Math.round(cx * 10) / 10}_${Math.round(cy * 10) / 10}`;
+        if (!addedSet.has(key)) {
+          addedSet.add(key);
+          columnPoints.push({ x: cx, y: cy });
+        }
+      });
+    });
+
+    return (
+      <g transform={`translate(${offsetX}, ${offsetY})`} key={floorType}>
+        
+        {/* FLOOR HEADER BANNER */}
+        <g transform="translate(0, -7.5)" className="pointer-events-none select-none font-sans">
+          <rect 
+            x="0" 
+            y="0" 
+            width={plotW} 
+            height="4.5" 
+            fill={isGround ? '#0284c7' : '#4f46e5'} 
+            rx="0.6" 
+            className="shadow-md" 
+          />
+          <text 
+            x={plotW / 2} 
+            y="2.8" 
+            fill="#ffffff" 
+            fontSize="1.6" 
+            fontWeight="900" 
+            textAnchor="middle" 
+            className="tracking-widest uppercase font-mono"
+          >
+            {floorTitle} ({plotW} × {plotL} {plot.unit})
+          </text>
+        </g>
+
+        {/* Outer Architectural Plot Boundary Wall */}
+        <rect
+          x="0"
+          y="0"
+          width={plotW}
+          height={plotL}
+          fill="#ffffff"
+          stroke="#0f172a"
+          strokeWidth="1.4"
+          className="shadow-xl"
+        />
+
+        {/* ACCESS BADGES */}
+        {isGround ? (
+          (() => {
+            const entryDoor = floorRooms
+              .flatMap((r) => (r.doors || []).map((d) => ({ room: r, door: d })))
+              .find(({ door }) => door.isMainEntry);
+            const badgeX = entryDoor
+              ? entryDoor.door.x + (entryDoor.door.width || 3.5) / 2 - 4.5
+              : plotW / 2 - 4.5;
+            return (
+              <g transform={`translate(${badgeX}, -2.2)`}>
+                <rect x="0" y="0" width="9" height="1.6" fill="#0284c7" rx="0.4" className="shadow-md" />
+                <text x="4.5" y="1.1" fill="#ffffff" fontSize="0.85" fontWeight="900" textAnchor="middle" className="font-sans tracking-widest">
+                  ▲ MAIN ENTRY
+                </text>
+              </g>
+            );
+          })()
+        ) : (
+          (() => {
+            const stair = floorRooms.find((r) => r.type === 'Staircase');
+            const stairX = stair ? stair.x + stair.width / 2 - 5.5 : plotW - 12;
+            const stairY = stair ? stair.y + stair.height + 0.8 : plotL + 0.8;
+            return (
+              <g transform={`translate(${stairX}, ${stairY})`}>
+                <rect x="0" y="0" width="11" height="1.6" fill="#6d28d9" rx="0.4" className="shadow-md" />
+                <text x="5.5" y="1.1" fill="#ffffff" fontSize="0.8" fontWeight="900" textAnchor="middle" className="font-sans tracking-wider">
+                  ▲ STAIRCASE ARRIVAL
+                </text>
+              </g>
+            );
+          })()
+        )}
+
+        {/* RENDER ROOMS */}
+        {floorRooms.map((room) => {
+          const rx = Math.round(room.x * 10) / 10;
+          const ry = Math.round(room.y * 10) / 10;
+          const rw = Math.round(room.width * 10) / 10;
+          const rh = Math.round(room.height * 10) / 10;
+          const roomArea = Math.round((rw * rh) * 10) / 10;
+          const isSelected = selectedRoomId === room.id;
+
+          const { displayName, titleSize, dimSize, areaSize, showDim, showArea } = getRoomLabelLayout(room);
+          const fillColor = getRoomFillColor(room);
+
+          return (
+            <g 
+              key={room.id} 
+              onClick={(e) => handleRoomClick(room, e)}
+              onMouseEnter={() => setHoveredRoom(room)}
+              onMouseLeave={() => setHoveredRoom(null)}
+              className="cursor-pointer transition-all duration-150 group"
+            >
+              {/* Room Body */}
+              <rect
+                x={rx}
+                y={ry}
+                width={rw}
+                height={rh}
+                fill={fillColor}
+                stroke={isSelected ? '#0284c7' : '#334155'}
+                strokeWidth={isSelected ? '1.2' : '0.6'}
+                rx="0.1"
+              />
+
+              {/* Kitchen Counter & Stoves */}
+              {room.type === 'Kitchen' && rw >= 6 && rh >= 5 && (
+                <g opacity="0.35">
+                  <rect x={rx + 0.3} y={ry + 0.3} width={rw - 0.6} height="1.2" fill="#d97706" rx="0.2" />
+                  <circle cx={rx + 1.5} cy={ry + 0.9} r="0.4" fill="#ffffff" />
+                  <circle cx={rx + 3.0} cy={ry + 0.9} r="0.4" fill="#ffffff" />
+                </g>
+              )}
+
+              {/* Bathroom WC */}
+              {(room.type === 'Bathroom' || room.type === 'Washroom') && rw >= 4 && rh >= 4 && (
+                <g opacity="0.35" transform={`translate(${rx + 0.5}, ${ry + 0.5})`}>
+                  <rect x="0" y="0" width="1.2" height="1.6" fill="#0284c7" rx="0.4" />
+                  <circle cx="0.6" cy="1.0" r="0.4" fill="#ffffff" />
+                </g>
+              )}
+
+              {/* Living Room Sofa */}
+              {(room.type === 'Living Room' || room.type === 'Hall') && rw >= 10 && rh >= 8 && (
+                <g opacity="0.25" transform={`translate(${rx + 0.8}, ${ry + 0.8})`}>
+                  <rect x="0" y="0" width="3.5" height="1.4" fill="#475569" rx="0.3" />
+                  <rect x="0.2" y="0.2" width="3.1" height="0.6" fill="#ffffff" rx="0.2" />
+                </g>
+              )}
+
+              {/* Dining Table */}
+              {room.type === 'Dining Room' && rw >= 8 && rh >= 7 && (
+                <g opacity="0.25" transform={`translate(${rx + rw - 3.5}, ${ry + 0.8})`}>
+                  <rect x="0" y="0" width="2.8" height="1.8" fill="#78350f" rx="0.3" />
+                </g>
+              )}
+
+              {/* Text Hierarchy */}
+              <g className="pointer-events-none select-none">
+                <text
+                  x={rx + rw / 2}
+                  y={ry + rh / 2 - (showDim ? (showArea ? 1.0 : 0.4) : 0)}
+                  fill="#0f172a"
+                  fontSize={titleSize}
+                  fontWeight="900"
+                  textAnchor="middle"
+                  className="font-sans tracking-wide"
+                >
+                  {displayName.toUpperCase()}
+                </text>
+
+                {showDimensions && showDim && (
+                  <text
+                    x={rx + rw / 2}
+                    y={ry + rh / 2 + 0.8}
+                    fill="#0369a1"
+                    fontSize={dimSize}
+                    fontWeight="800"
+                    textAnchor="middle"
+                    className="font-mono"
+                  >
+                    {rw} × {rh} {plot.unit}
+                  </text>
+                )}
+
+                {showDimensions && showArea && (
+                  <text
+                    x={rx + rw / 2}
+                    y={ry + rh / 2 + 2.0}
+                    fill="#64748b"
+                    fontSize={areaSize}
+                    fontWeight="600"
+                    textAnchor="middle"
+                    className="font-sans font-semibold"
+                  >
+                    {roomArea} sq.{plot.unit}
+                  </text>
+                )}
+              </g>
+
+              {/* Staircase Steps */}
+              {room.type === 'Staircase' && (
+                <g opacity="0.6">
+                  {[...Array(7)].map((_, i) => (
+                    <line
+                      key={i}
+                      x1={rx + 0.5}
+                      y1={ry + (rh / 7) * i}
+                      x2={rx + rw - 0.5}
+                      y2={ry + (rh / 7) * i}
+                      stroke="#6d28d9"
+                      strokeWidth="0.2"
+                    />
+                  ))}
+                  <text x={rx + rw / 2} y={ry + rh - 0.6} fill="#6d28d9" fontSize="0.9" fontWeight="900" textAnchor="middle">
+                    ↑ UP
+                  </text>
+                </g>
+              )}
+
+              {/* Balcony Railing */}
+              {room.type === 'Balcony' && (
+                <rect
+                  x={rx + 0.2}
+                  y={ry + 0.2}
+                  width={rw - 0.4}
+                  height={rh - 0.4}
+                  fill="none"
+                  stroke="#059669"
+                  strokeWidth="0.25"
+                  strokeDasharray="0.4 0.4"
+                />
+              )}
+
+              {/* Doors with Swing Arcs */}
+              {(room.doors || []).map((door, idx) => {
+                const dw = door.width || 3;
+                const wall = door.wall || 'north';
+                const vertical = wall === 'east' || wall === 'west';
+                const swing = door.swing_direction || (vertical ? 'in_right' : 'in_bottom');
+
+                let rectProps;
+                let arcPath;
+                if (vertical) {
+                  rectProps = { x: door.x - 0.25, y: door.y, width: 0.5, height: dw };
+                  if (swing === 'in_left' || wall === 'east') {
+                    arcPath = `M ${door.x} ${door.y} A ${dw} ${dw} 0 0 0 ${door.x - dw} ${door.y + dw}`;
+                  } else {
+                    arcPath = `M ${door.x} ${door.y} A ${dw} ${dw} 0 0 1 ${door.x + dw} ${door.y + dw}`;
+                  }
+                } else {
+                  rectProps = { x: door.x, y: door.y - 0.25, width: Math.min(dw, rw - 0.5), height: 0.5 };
+                  if (swing === 'in_top' || swing === 'north') {
+                    arcPath = `M ${door.x} ${door.y} A ${dw} ${dw} 0 0 0 ${door.x + dw} ${door.y - dw}`;
+                  } else {
+                    arcPath = `M ${door.x} ${door.y} A ${dw} ${dw} 0 0 1 ${door.x + dw} ${door.y + dw}`;
+                  }
+                }
+
+                return (
+                  <g key={idx}>
+                    <rect {...rectProps} fill={door.isMainEntry ? '#0284c7' : '#d97706'} />
+                    <path
+                      d={arcPath}
+                      fill="none"
+                      stroke={door.isMainEntry ? '#0284c7' : '#d97706'}
+                      strokeWidth="0.2"
+                      strokeDasharray="0.4 0.2"
+                    />
+                  </g>
+                );
+              })}
+
+              {/* Windows */}
+              {(room.windows || []).map((win, idx) => {
+                const ww = Math.min(win.width || 4, rw - 1);
+                return (
+                  <rect
+                    key={idx}
+                    x={win.x}
+                    y={win.y - 0.3}
+                    width={ww}
+                    height="0.6"
+                    fill="#38bdf8"
+                    stroke="#0284c7"
+                    strokeWidth="0.2"
+                  />
+                );
+              })}
+
+            </g>
+          );
+        })}
+
+        {/* STRUCTURAL RCC COLUMNS */}
+        <g className="pointer-events-none select-none">
+          {columnPoints.map((col, i) => (
+            <g key={i}>
+              <rect
+                x={col.x - 0.4}
+                y={col.y - 0.4}
+                width="0.8"
+                height="0.8"
+                fill="#0f172a"
+                stroke="#38bdf8"
+                strokeWidth="0.1"
+                rx="0.05"
+              />
+              <line x1={col.x - 0.3} y1={col.y - 0.3} x2={col.x + 0.3} y2={col.y + 0.3} stroke="#ffffff" strokeWidth="0.08" />
+              <line x1={col.x - 0.3} y1={col.y + 0.3} x2={col.x + 0.3} y2={col.y - 0.3} stroke="#ffffff" strokeWidth="0.08" />
+            </g>
+          ))}
+        </g>
+
+        {/* DIMENSION LINES */}
+        {showDimensions && (
+          <g className="font-mono select-none">
+            {/* Width Dimension Line */}
+            <line x1="0" y1={plotL + 4} x2={plotW} y2={plotL + 4} stroke="#0284c7" strokeWidth="0.3" />
+            <line x1="0" y1={plotL + 2.5} x2="0" y2={plotL + 5.5} stroke="#0284c7" strokeWidth="0.3" />
+            <line x1={plotW} y1={plotL + 2.5} x2={plotW} y2={plotL + 5.5} stroke="#0284c7" strokeWidth="0.3" />
+            
+            <rect x={plotW / 2 - 8} y={plotL + 2.5} width="16" height="3" fill="#e0f2fe" stroke="#0284c7" strokeWidth="0.2" rx="0.6" />
+            <text x={plotW / 2} y={plotL + 4.5} fill="#0369a1" fontSize="1.3" fontWeight="800" textAnchor="middle">
+              WIDTH: {plotW} {plot.unit}
+            </text>
+
+            {/* Length Dimension Line */}
+            <line x1={plotW + 4} y1="0" x2={plotW + 4} y2={plotL} stroke="#0284c7" strokeWidth="0.3" />
+            <line x1={plotW + 2.5} y1="0" x2={plotW + 5.5} y2="0" stroke="#0284c7" strokeWidth="0.3" />
+            <line x1={plotW + 2.5} y1={plotL} x2={plotW + 5.5} y2={plotL} stroke="#0284c7" strokeWidth="0.3" />
+
+            <g transform={`translate(${plotW + 6.5}, ${plotL / 2}) rotate(90)`}>
+              <rect x="-8" y="-1.5" width="16" height="3" fill="#e0f2fe" stroke="#0284c7" strokeWidth="0.2" rx="0.6" />
+              <text x="0" y="0.5" fill="#0369a1" fontSize="1.3" fontWeight="800" textAnchor="middle">
+                LENGTH: {plotL} {plot.unit}
+              </text>
+            </g>
+          </g>
+        )}
+
+      </g>
+    );
+  };
+
   return (
     <div 
       ref={containerRef}
@@ -224,7 +563,7 @@ export default function FloorPlan2DViewer({
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
               }`}
             >
-              <Box className="w-3.5 h-3.5" /> Combined View
+              <Box className="w-3.5 h-3.5" /> Combined (Side-by-Side)
             </button>
           )}
         </div>
@@ -232,12 +571,12 @@ export default function FloorPlan2DViewer({
         {/* ARCHITECTURAL TITLE BANNER */}
         <div className="hidden md:flex items-center gap-2 font-mono text-xs text-slate-700 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 font-bold">
           <span className="text-sky-700 uppercase tracking-wider">
-            {activeFloorView === 'ground' ? 'GROUND FLOOR PLAN' : activeFloorView === 'first' ? 'FIRST FLOOR PLAN' : 'GROUND + FIRST FLOOR'}
+            {activeFloorView === 'ground' ? 'GROUND FLOOR PLAN' : activeFloorView === 'first' ? 'FIRST FLOOR PLAN' : 'DUAL BLUEPRINT SHEET: GROUND + FIRST'}
           </span>
           <span className="text-slate-400">|</span>
           <span>{plotW} × {plotL} {plot.unit}</span>
           <span className="text-slate-400">|</span>
-          <span>{plotW * plotL} sq.{plot.unit}</span>
+          <span>{plotW * plotL * (isCombined ? 2 : 1)} sq.{plot.unit}</span>
         </div>
 
         {/* VIEWPORT CONTROLS */}
@@ -356,280 +695,37 @@ export default function FloorPlan2DViewer({
             />
           )}
 
-          {/* Root Group with Padding Offset */}
-          <g transform={`translate(${padding}, ${padding})`}>
-            
-            {/* Outer Architectural Plot Boundary Wall (Dark Charcoal Thick Line) */}
-            <rect
-              x="0"
-              y="0"
-              width={plotW}
-              height={plotL}
-              fill="#ffffff"
-              stroke="#0f172a"
-              strokeWidth="1.4"
-              className="shadow-xl"
-            />
-
-            {/* MAIN ENTRY INDICATOR — aligned to Living Room main entry door */}
-            {(() => {
-              const entryDoor = currentRooms
-                .flatMap((r) => (r.doors || []).map((d) => ({ room: r, door: d })))
-                .find(({ door }) => door.isMainEntry);
-              const badgeX = entryDoor
-                ? entryDoor.door.x + (entryDoor.door.width || 3.5) / 2 - 4.5
-                : plotW / 2 - 4.5;
-              return (
-                <g transform={`translate(${badgeX}, -2.2)`}>
-                  <rect x="0" y="0" width="9" height="1.5" fill="#0284c7" rx="0.4" className="shadow-md" />
-                  <text x="4.5" y="1.0" fill="#ffffff" fontSize="0.8" fontWeight="900" textAnchor="middle" className="font-sans tracking-widest">
-                    ▲ MAIN ENTRY
-                  </text>
-                </g>
-              );
-            })()}
-
-            {/* Render Rooms */}
-            {currentRooms.map((room) => {
-              const rx = Math.round(room.x * 10) / 10;
-              const ry = Math.round(room.y * 10) / 10;
-              const rw = Math.round(room.width * 10) / 10;
-              const rh = Math.round(room.height * 10) / 10;
-              const roomArea = Math.round((rw * rh) * 10) / 10;
-              const isSelected = selectedRoomId === room.id;
-              const isFirstFloorOverlay = room.floorOverlay === 'first';
-
-              const { displayName, titleSize, dimSize, areaSize, showDim, showArea } = getRoomLabelLayout(room);
-              const fillColor = getRoomFillColor(room);
-
-              return (
-                <g 
-                  key={room.id} 
-                  onClick={(e) => handleRoomClick(room, e)}
-                  onMouseEnter={() => setHoveredRoom(room)}
-                  onMouseLeave={() => setHoveredRoom(null)}
-                  className="cursor-pointer transition-all duration-150 group"
-                  opacity={isFirstFloorOverlay ? 0.75 : 1.0}
-                >
-                  {/* Room Interior Polygon Body */}
-                  <rect
-                    x={rx}
-                    y={ry}
-                    width={rw}
-                    height={rh}
-                    fill={fillColor}
-                    stroke={isSelected ? '#0284c7' : (isFirstFloorOverlay ? '#7c3aed' : '#334155')}
-                    strokeWidth={isSelected ? '1.2' : '0.6'}
-                    strokeDasharray={isFirstFloorOverlay ? '1.5 1' : 'none'}
-                    rx="0.1"
-                  />
-
-                  {/* KITCHEN SPECIFIC SYMBOLS: Counter along wall */}
-                  {room.type === 'Kitchen' && rw >= 6 && rh >= 5 && (
-                    <g opacity="0.35">
-                      <rect x={rx + 0.3} y={ry + 0.3} width={rw - 0.6} height="1.2" fill="#d97706" rx="0.2" />
-                      <circle cx={rx + 1.5} cy={ry + 0.9} r="0.4" fill="#ffffff" />
-                      <circle cx={rx + 3.0} cy={ry + 0.9} r="0.4" fill="#ffffff" />
-                    </g>
-                  )}
-
-                  {/* BATHROOM SPECIFIC SYMBOLS: Toilet WC & Basin Representation */}
-                  {(room.type === 'Bathroom' || room.type === 'Washroom') && rw >= 4 && rh >= 4 && (
-                    <g opacity="0.35" transform={`translate(${rx + 0.5}, ${ry + 0.5})`}>
-                      <rect x="0" y="0" width="1.2" height="1.6" fill="#0284c7" rx="0.4" />
-                      <circle cx="0.6" cy="1.0" r="0.4" fill="#ffffff" />
-                    </g>
-                  )}
-
-                  {/* LIVING ROOM SPECIFIC SYMBOLS: Subtle Sofa Line */}
-                  {(room.type === 'Living Room' || room.type === 'Hall') && rw >= 10 && rh >= 8 && (
-                    <g opacity="0.25" transform={`translate(${rx + 0.8}, ${ry + 0.8})`}>
-                      <rect x="0" y="0" width="3.5" height="1.4" fill="#475569" rx="0.3" />
-                      <rect x="0.2" y="0.2" width="3.1" height="0.6" fill="#ffffff" rx="0.2" />
-                    </g>
-                  )}
-
-                  {/* DINING SPECIFIC SYMBOLS: Table & Chairs */}
-                  {room.type === 'Dining Room' && rw >= 8 && rh >= 7 && (
-                    <g opacity="0.25" transform={`translate(${rx + rw - 3.5}, ${ry + 0.8})`}>
-                      <rect x="0" y="0" width="2.8" height="1.8" fill="#78350f" rx="0.3" />
-                    </g>
-                  )}
-
-                  {/* ROOM TEXT HIERARCHY (Title, Dimension, Area - No Overlap) */}
-                  <g className="pointer-events-none select-none">
-                    {/* Line 1: Room Name (Largest Bold Title) */}
-                    <text
-                      x={rx + rw / 2}
-                      y={ry + rh / 2 - (showDim ? (showArea ? 1.0 : 0.4) : 0)}
-                      fill="#0f172a"
-                      fontSize={titleSize}
-                      fontWeight="900"
-                      textAnchor="middle"
-                      className="font-sans tracking-wide"
-                    >
-                      {displayName.toUpperCase()}
-                    </text>
-
-                    {/* Line 2: Room Dimensions (Medium Mono Text) */}
-                    {showDimensions && showDim && (
-                      <text
-                        x={rx + rw / 2}
-                        y={ry + rh / 2 + 0.8}
-                        fill="#0369a1"
-                        fontSize={dimSize}
-                        fontWeight="800"
-                        textAnchor="middle"
-                        className="font-mono"
-                      >
-                        {rw} × {rh} {plot.unit}
-                      </text>
-                    )}
-
-                    {/* Line 3: Room Area (Smallest Subtext) */}
-                    {showDimensions && showArea && (
-                      <text
-                        x={rx + rw / 2}
-                        y={ry + rh / 2 + 2.0}
-                        fill="#64748b"
-                        fontSize={areaSize}
-                        fontWeight="600"
-                        textAnchor="middle"
-                        className="font-sans font-semibold"
-                      >
-                        {roomArea} sq.{plot.unit}
-                      </text>
-                    )}
-                  </g>
-
-                  {/* Staircase Step Graphic (Parallel steps + Directional Arrow) */}
-                  {room.type === 'Staircase' && (
-                    <g opacity="0.6">
-                      {[...Array(7)].map((_, i) => (
-                        <line
-                          key={i}
-                          x1={rx + 0.5}
-                          y1={ry + (rh / 7) * i}
-                          x2={rx + rw - 0.5}
-                          y2={ry + (rh / 7) * i}
-                          stroke="#6d28d9"
-                          strokeWidth="0.2"
-                        />
-                      ))}
-                      <text x={rx + rw / 2} y={ry + rh - 0.6} fill="#6d28d9" fontSize="0.9" fontWeight="900" textAnchor="middle">
-                        ↑ UP
-                      </text>
-                    </g>
-                  )}
-
-                  {/* Balcony Railing Lines */}
-                  {room.type === 'Balcony' && (
-                    <rect
-                      x={rx + 0.2}
-                      y={ry + 0.2}
-                      width={rw - 0.4}
-                      height={rh - 0.4}
-                      fill="none"
-                      stroke="#059669"
-                      strokeWidth="0.25"
-                      strokeDasharray="0.4 0.4"
-                    />
-                  )}
-
-                  {/* Doors — orientation-aware cutout + swing arc */}
-                  {(room.doors || []).map((door, idx) => {
-                    const dw = door.width || 3;
-                    const wall = door.wall || 'north';
-                    const vertical = wall === 'east' || wall === 'west';
-                    const swing = door.swing_direction || (vertical ? 'in_right' : 'in_bottom');
-
-                    let rectProps;
-                    let arcPath;
-                    if (vertical) {
-                      rectProps = { x: door.x - 0.25, y: door.y, width: 0.5, height: dw };
-                      if (swing === 'in_left' || wall === 'east') {
-                        arcPath = `M ${door.x} ${door.y} A ${dw} ${dw} 0 0 0 ${door.x - dw} ${door.y + dw}`;
-                      } else {
-                        arcPath = `M ${door.x} ${door.y} A ${dw} ${dw} 0 0 1 ${door.x + dw} ${door.y + dw}`;
-                      }
-                    } else {
-                      rectProps = { x: door.x, y: door.y - 0.25, width: Math.min(dw, rw - 0.5), height: 0.5 };
-                      if (swing === 'in_top' || swing === 'north') {
-                        arcPath = `M ${door.x} ${door.y} A ${dw} ${dw} 0 0 0 ${door.x + dw} ${door.y - dw}`;
-                      } else {
-                        arcPath = `M ${door.x} ${door.y} A ${dw} ${dw} 0 0 1 ${door.x + dw} ${door.y + dw}`;
-                      }
-                    }
-
-                    return (
-                      <g key={idx}>
-                        <rect {...rectProps} fill={door.isMainEntry ? '#0284c7' : '#d97706'} />
-                        <path
-                          d={arcPath}
-                          fill="none"
-                          stroke={door.isMainEntry ? '#0284c7' : '#d97706'}
-                          strokeWidth="0.2"
-                          strokeDasharray="0.4 0.2"
-                        />
-                      </g>
-                    );
-                  })}
-
-                  {/* Windows Cutout Symbol */}
-                  {(room.windows || []).map((win, idx) => {
-                    const ww = Math.min(win.width || 4, rw - 1);
-                    return (
-                      <rect
-                        key={idx}
-                        x={win.x}
-                        y={win.y - 0.3}
-                        width={ww}
-                        height="0.6"
-                        fill="#38bdf8"
-                        stroke="#0284c7"
-                        strokeWidth="0.2"
-                      />
-                    );
-                  })}
-
-                </g>
-              );
-            })}
-
-            {/* EXTERNAL PLOT DIMENSION LINES (ONLY 2 PRIMARY LINES OUTSIDE BUILDING) */}
-            {showDimensions && (
-              <g className="font-mono select-none">
-                {/* 1. TOTAL WIDTH DIMENSION LINE (BELOW THE PLOT) */}
-                <line x1="0" y1={plotL + 4} x2={plotW} y2={plotL + 4} stroke="#0284c7" strokeWidth="0.3" />
-                <line x1="0" y1={plotL + 2.5} x2="0" y2={plotL + 5.5} stroke="#0284c7" strokeWidth="0.3" />
-                <line x1={plotW} y1={plotL + 2.5} x2={plotW} y2={plotL + 5.5} stroke="#0284c7" strokeWidth="0.3" />
-                
-                <rect x={plotW / 2 - 9} y={plotL + 2.5} width="18" height="3" fill="#e0f2fe" stroke="#0284c7" strokeWidth="0.2" rx="0.6" />
-                <text x={plotW / 2} y={plotL + 4.5} fill="#0369a1" fontSize="1.4" fontWeight="800" textAnchor="middle">
-                  TOTAL WIDTH: {plotW} {plot.unit}
-                </text>
-
-                {/* 2. TOTAL LENGTH DIMENSION LINE (RIGHT OF THE PLOT) */}
-                <line x1={plotW + 4} y1="0" x2={plotW + 4} y2={plotL} stroke="#0284c7" strokeWidth="0.3" />
-                <line x1={plotW + 2.5} y1="0" x2={plotW + 5.5} y2="0" stroke="#0284c7" strokeWidth="0.3" />
-                <line x1={plotW + 2.5} y1={plotL} x2={plotW + 5.5} y2={plotL} stroke="#0284c7" strokeWidth="0.3" />
-
-                <g transform={`translate(${plotW + 6.5}, ${plotL / 2}) rotate(90)`}>
-                  <rect x="-9" y="-1.5" width="18" height="3" fill="#e0f2fe" stroke="#0284c7" strokeWidth="0.2" rx="0.6" />
-                  <text x="0" y="0.5" fill="#0369a1" fontSize="1.4" fontWeight="800" textAnchor="middle">
-                    TOTAL LENGTH: {plotL} {plot.unit}
-                  </text>
-                </g>
-              </g>
-            )}
-
+          {/* NORTH ARROW ARCHITECTURAL COMPASS */}
+          <g transform={`translate(${viewWidth - 16}, 10)`} className="pointer-events-none select-none">
+            <circle cx="6" cy="6" r="5" fill="#ffffff" stroke="#0f172a" strokeWidth="0.3" className="shadow-sm" />
+            <polygon points="6,2 4.5,6.5 6,5.5 7.5,6.5" fill="#ef4444" />
+            <polygon points="6,10 4.5,5.5 6,6.5 7.5,5.5" fill="#334155" />
+            <text x="6" y="1.2" fill="#0f172a" fontSize="1.4" fontWeight="900" textAnchor="middle" className="font-mono">N</text>
           </g>
+
+          {/* RENDER ACTIVE VIEWS */}
+          {activeFloorView === 'ground' && (
+            renderFloorSheet('ground', groundFloor.rooms || [], padding, padding, 'Ground Floor Plan')
+          )}
+
+          {activeFloorView === 'first' && (
+            renderFloorSheet('first', firstFloor.rooms || [], padding, padding, 'First Floor Plan')
+          )}
+
+          {activeFloorView === 'combined' && (
+            <>
+              {renderFloorSheet('ground', groundFloor.rooms || [], padding, padding, 'Ground Floor Plan')}
+              {renderFloorSheet('first', firstFloor.rooms || [], padding + plotW + separationGap, padding, 'First Floor Plan')}
+            </>
+          )}
+
         </svg>
 
         {/* FLOATING HOVER TOOLTIP */}
         {hoveredRoom && (
           <div className="absolute top-4 left-4 bg-slate-900/90 text-white backdrop-blur-md px-3 py-1.5 rounded-xl shadow-lg text-xs font-mono border border-slate-700 pointer-events-none z-20 space-y-0.5">
             <div className="font-bold text-sky-300">{hoveredRoom.name}</div>
+            <div className="text-[11px] text-slate-300">Floor: <span className="capitalize font-bold text-white">{hoveredRoom.floor || 'Ground'}</span></div>
             <div className="text-[11px] text-slate-300">Dimensions: {hoveredRoom.width} × {hoveredRoom.height} {plot.unit}</div>
             <div className="text-[10px] text-slate-400">Area: {hoveredRoom.area} sq.{plot.unit}</div>
           </div>
@@ -638,7 +734,7 @@ export default function FloorPlan2DViewer({
         {/* ARCHITECTURAL SYMBOL LEGEND */}
         <div className="absolute bottom-3 left-3 bg-white/90 border border-slate-200 backdrop-blur-md px-3 py-1.5 rounded-xl shadow-sm text-[10px] font-mono text-slate-700 flex items-center gap-3 z-10 pointer-events-none">
           <span className="font-bold text-slate-900 uppercase">Legend:</span>
-          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-slate-900 inline-block rounded-xs"></span> Wall</span>
+          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-slate-900 inline-block rounded-xs"></span> Wall / Column</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-sky-400 inline-block rounded-xs"></span> Window</span>
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-amber-500 inline-block rounded-xs"></span> Door</span>
           <span className="flex items-center gap-1"><span className="text-indigo-600 font-bold">↑</span> Staircase</span>
@@ -649,7 +745,7 @@ export default function FloorPlan2DViewer({
       {/* FOOTER CANVAS STATS BAR */}
       <div className="bg-white border-t border-slate-200 px-4 py-2 flex items-center justify-between text-xs text-slate-600 font-mono shrink-0 rounded-b-xl">
         <div>
-          Viewing: <span className="font-bold text-sky-700 capitalize">{activeFloorView} Floor</span>
+          Viewing: <span className="font-bold text-sky-700 capitalize">{activeFloorView === 'combined' ? 'Ground + First Dual Sheet' : `${activeFloorView} Floor`}</span>
         </div>
         <div>
           Total Plot Area: <span className="font-bold text-slate-900">{plotW * plotL} sq.{plot.unit}</span>

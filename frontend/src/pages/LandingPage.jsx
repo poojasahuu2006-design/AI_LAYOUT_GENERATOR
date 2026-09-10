@@ -169,30 +169,63 @@ export default function LandingPage({ onStartDesigning, onViewDemo, onGoToWorksp
         </div>
       </section>
 
-      {/* HOW IT WORKS SECTION */}
+      {/* HOW IT WORKS & CIVIL TOOLS SECTION */}
       <section className="py-16 px-4 sm:px-6 lg:px-8 bg-white border-b border-slate-200">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-12">
-            <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 mb-3">Workflow Engine</h2>
-            <p className="text-slate-600 text-sm max-w-2xl mx-auto">
-              From plot dimensions to a full 2D and 3D architectural floor plan in four simple steps.
+            <span className="px-3 py-1 bg-sky-100 text-sky-800 border border-sky-300 text-[10px] font-mono font-bold uppercase rounded-md">
+              END-TO-END CIVIL ENGINE
+            </span>
+            <h2 className="text-2xl sm:text-3xl font-black text-slate-900 mt-2 mb-3">Architectural Workflow & Civil Tools</h2>
+            <p className="text-slate-600 text-sm max-w-2xl mx-auto font-medium">
+              From plot dimensions to full 2D CAD blueprints, 3D textured models, and complete construction BOQ bill of materials.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-12">
             {[
-              { step: '01', title: 'Enter Your Plot', desc: 'Provide plot length and width in feet or meters.', icon: Ruler },
-              { step: '02', title: 'Select Requirements', desc: 'Specify Ground Floor and First Floor room requirements.', icon: Mic },
-              { step: '03', title: 'Generate Layout', desc: 'AI solves space constraints with NBC 2016 & ECSBC 2024 compliance.', icon: Cpu },
-              { step: '04', title: 'Interactive 3D', desc: 'Explore your house in 2D vector blueprint and 3D orbit viewer.', icon: Layers }
+              { step: '01', title: 'Enter Plot Bounds', desc: 'Input plot length and width in ft/m with automatic FSI and plinth area calculations.', icon: Ruler },
+              { step: '02', title: 'Specify Rooms (G+1)', desc: 'Configure Ground and First floor rooms with natural voice input or smart sliders.', icon: Mic },
+              { step: '03', title: 'Auto-Solve CAD Layout', desc: 'Deterministic 100% area solver ensures zero overlaps and balanced room zoning.', icon: Cpu },
+              { step: '04', title: 'BOQ & 3D Visualization', desc: 'Inspect textured 3D walkthroughs, estimate cement/steel costs, and export CAD SVGs.', icon: Layers }
             ].map((s, idx) => (
               <div key={idx} className="bg-slate-50 border border-slate-200 p-6 rounded-2xl relative hover:border-sky-500 transition saas-card-hover">
-                <span className="text-2xl font-black text-slate-300 mb-3 block font-mono">{s.step}</span>
+                <span className="text-2xl font-black text-sky-200 mb-3 block font-mono">{s.step}</span>
                 <s.icon className="w-5 h-5 text-sky-600 mb-2" />
                 <h3 className="text-sm font-bold text-slate-900 mb-1">{s.title}</h3>
-                <p className="text-xs text-slate-600 leading-relaxed">{s.desc}</p>
+                <p className="text-xs text-slate-600 leading-relaxed font-medium">{s.desc}</p>
               </div>
             ))}
+          </div>
+
+          {/* 3 Civil Studio Feature Banners */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-slate-100">
+            <div className="bg-gradient-to-br from-amber-50 to-orange-50/50 border border-amber-200 rounded-2xl p-5">
+              <div className="text-amber-800 font-bold text-xs font-mono mb-1 flex items-center gap-1.5">
+                <Ruler className="w-4 h-4 text-amber-600" /> BOQ Civil Cost Estimator
+              </div>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Calculates exact quantities for Cement bags, Steel TMT bars, Red clay bricks, Sand, Tiles, and Mason labor per IS 3861:2002.
+              </p>
+            </div>
+
+            <div className="bg-gradient-to-br from-emerald-50 to-teal-50/50 border border-emerald-200 rounded-2xl p-5">
+              <div className="text-emerald-800 font-bold text-xs font-mono mb-1 flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-emerald-600" /> Vastu Shastra Directional Audit
+              </div>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Evaluates 8 cardinal compass zones (NE Pooja/Living, SE Agni Kitchen, SW Master Bed, NW Air/Bath) with a live compliance score.
+              </p>
+            </div>
+
+            <div className="bg-gradient-to-br from-sky-50 to-blue-50/50 border border-sky-200 rounded-2xl p-5">
+              <div className="text-sky-800 font-bold text-xs font-mono mb-1 flex items-center gap-1.5">
+                <Layers className="w-4 h-4 text-sky-600" /> NBC 2016 Opening Schedule
+              </div>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Automates door (D1, D2, D3) and window (W1, W2, V1) sizing, ventilation ratios, and RCC structural column crosshair placement.
+              </p>
+            </div>
           </div>
         </div>
       </section>

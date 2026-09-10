@@ -80,8 +80,10 @@ function generateLayout({ plot, selectedFloors, floorRequirements, rooms }) {
     firstReqs = [
       { type: 'Master Bedroom', quantity: 1 },
       { type: 'Bedroom', quantity: 1 },
+      { type: 'Living Room', quantity: 1 },
       { type: 'Bathroom', quantity: 1 },
-      { type: 'Balcony', quantity: 1 }
+      { type: 'Balcony', quantity: 1 },
+      { type: 'Staircase', quantity: 1 }
     ];
   }
 

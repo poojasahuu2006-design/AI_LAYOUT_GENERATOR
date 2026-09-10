@@ -49,19 +49,41 @@
 /* Light Architectural Grid Pattern */
 .bg-architect-grid-light {
   background-color: #f8fafc;
-  background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
-  background-size: 24px 24px;
+  background-image: 
+    linear-gradient(rgba(14, 165, 233, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(14, 165, 233, 0.08) 1px, transparent 1px),
+    linear-gradient(rgba(14, 165, 233, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(14, 165, 233, 0.03) 1px, transparent 1px);
+  background-size: 50px 50px, 50px 50px, 10px 10px, 10px 10px;
+}
+
+/* Authentic Dark CAD Blueprint Pattern */
+.bg-blueprint-dark {
+  background-color: #0b192c;
+  background-image: 
+    linear-gradient(rgba(56, 189, 248, 0.15) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(56, 189, 248, 0.15) 1px, transparent 1px),
+    linear-gradient(rgba(56, 189, 248, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(56, 189, 248, 0.05) 1px, transparent 1px);
+  background-size: 60px 60px, 60px 60px, 12px 12px, 12px 12px;
 }
 
 /* Light Blueprint Grid Pattern */
 .bg-blueprint-light {
-  background-color: #f0fdf4;
+  background-color: #f0f9ff;
   background-image: 
-    linear-gradient(rgba(14, 165, 233, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(14, 165, 233, 0.08) 1px, transparent 1px),
+    linear-gradient(rgba(14, 165, 233, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(14, 165, 233, 0.12) 1px, transparent 1px),
     linear-gradient(rgba(14, 165, 233, 0.04) 1px, transparent 1px),
     linear-gradient(90deg, rgba(14, 165, 233, 0.04) 1px, transparent 1px);
   background-size: 40px 40px, 40px 40px, 10px 10px, 10px 10px;
+}
+
+/* Isometric Construction Grid */
+.bg-isometric-grid {
+  background-color: #0f172a;
+  background-image: radial-gradient(rgba(56, 189, 248, 0.2) 1px, transparent 1px);
+  background-size: 20px 20px;
 }
 
 /* SaaS Light Glass Panels */
@@ -79,3 +101,133 @@
   box-shadow: 0 10px 15px -3px rgba(14, 165, 233, 0.08), 0 4px 6px -4px rgba(14, 165, 233, 0.04);
   transform: translateY(-2px);
 }
+
+/* CAD Technical Sheet Border */
+.cad-sheet-border {
+  border: 2px solid #0284c7;
+  box-shadow: 0 0 0 4px rgba(2, 132, 199, 0.1), inset 0 0 0 1px rgba(2, 132, 199, 0.2);
+  position: relative;
+}
+
+/* Engineer Stamp Tag */
+.cad-stamp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid;
+}
+
+@keyframes spinSlow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin-slow {
+  animation: spinSlow 20s linear infinite;
+}
+
+/* CAD Construction Crosshair Cursor */
+.cursor-cad {
+  cursor: crosshair;
+}
+
+/* =========================================================
+   PROFESSIONAL ARCHITECTURAL CAD PRINT & PDF STYLES
+   Ensures clean 1-sheet fit without extra pages or SaaS UI clutter
+   ========================================================= */
+@media print {
+  @page {
+    size: landscape;
+    margin: 8mm;
+  }
+
+  html, body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    overflow: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Hide SaaS UI: Navbar, Sidebars, AI Chat, Modals, Buttons */
+  header,
+  nav,
+  aside,
+  button,
+  form,
+  input,
+  .no-print,
+  .disclaimer-banner,
+  .modal-backdrop {
+    display: none !important;
+  }
+
+  /* Display print-only headers and title block stamps */
+  .print-only,
+  .print\:flex {
+    display: flex !important;
+  }
+
+  /* Expand main workspace container to occupy the print sheet cleanly */
+  #root,
+  .min-h-screen,
+  main,
+  .visualizer-container {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    height: auto !important;
+    max-height: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    border: none !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* Scale 2D SVG cleanly to fit on a single page */
+  svg {
+    max-width: 100% !important;
+    max-height: 75vh !important;
+    height: auto !important;
+    width: 100% !important;
+    margin: 0 auto !important;
+    display: block !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    overflow: visible !important;
+  }
+
+  /* Scale 3D Canvas cleanly to fit on a single page */
+  canvas {
+    max-width: 100% !important;
+    max-height: 72vh !important;
+    width: auto !important;
+    height: auto !important;
+    margin: 0 auto !important;
+    display: block !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* Prevent page breaks across all child blocks */
+  * {
+    page-break-after: avoid !important;
+    page-break-before: avoid !important;
+  }
+}
+

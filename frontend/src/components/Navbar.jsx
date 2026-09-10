@@ -36,19 +36,25 @@ export default function Navbar({ activePage, setActivePage }) {
           onClick={() => setActivePage('home')} 
           className="flex items-center gap-3 cursor-pointer group"
         >
-          <div className="w-10 h-10 rounded-xl bg-sky-600 flex items-center justify-center text-white shadow-md shadow-sky-600/20 group-hover:scale-105 transition">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-600 via-blue-700 to-indigo-800 flex items-center justify-center text-white shadow-md shadow-sky-600/20 group-hover:scale-105 transition border border-sky-400/30">
             <Home className="w-5 h-5" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-extrabold text-lg tracking-tight text-slate-900">
+              <span className="font-black text-lg tracking-tight text-slate-900">
                 AI House Planner
               </span>
-              <span className="px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide bg-sky-50 text-sky-700 border border-sky-200 rounded-full">
-                Ground + First Floor
+              <span className="px-2 py-0.5 text-[9px] font-mono font-bold uppercase tracking-wider bg-sky-100 text-sky-800 border border-sky-300 rounded">
+                CAD STUDIO
+              </span>
+              <span className="px-2 py-0.5 text-[9px] font-mono font-bold uppercase tracking-wide bg-amber-50 text-amber-700 border border-amber-200 rounded hidden sm:inline-block">
+                G+1 DUPLEX
               </span>
             </div>
-            <p className="text-[11px] text-slate-500 font-medium">NBC 2016 • ECSBC 2024 • Mah. Act 1960 Compliant</p>
+            <p className="text-[10px] text-slate-500 font-mono flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              NBC 2016 • IS 3861:2002 • ECSBC 2024 COMPLIANT
+            </p>
           </div>
         </div>
 

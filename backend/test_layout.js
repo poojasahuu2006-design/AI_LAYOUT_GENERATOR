@@ -74,6 +74,7 @@ const testCases = [
       first: [
         { type: 'Master Bedroom', quantity: 1 },
         { type: 'Bedroom', quantity: 1 },
+        { type: 'Living Room', quantity: 1 },
         { type: 'Bathroom', quantity: 1 },
         { type: 'Balcony', quantity: 1 },
         { type: 'Staircase', quantity: 1 }
@@ -101,6 +102,9 @@ testCases.forEach((tc, idx) => {
       console.log(`    - ${r.name} (${r.type}): x=${r.x}, y=${r.y}, w=${r.width}, h=${r.height} | Area: ${r.area} sq.ft | Doors: ${r.doors.length}, Windows: ${r.windows.length}`);
       totalRoomArea += r.area;
     });
+    if (f.layoutFailures && f.layoutFailures.length) {
+      console.log(`    FAILURES in ${f.floor}:`, f.layoutFailures);
+    }
     console.log(`    Total Floor Room Area: ${Math.round(totalRoomArea * 10) / 10} / Plot Area: ${layout.plot.totalArea}`);
     console.log(`    Space Utilization: ${Math.round((totalRoomArea / layout.plot.totalArea) * 100)}%`);
   });
