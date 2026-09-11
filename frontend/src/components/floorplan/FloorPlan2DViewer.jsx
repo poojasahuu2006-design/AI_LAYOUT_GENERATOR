@@ -1,8 +1,24 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
-  ZoomIn, ZoomOut, RotateCcw, Maximize, Grid, Layers, Download, Printer, Eye, EyeOff, Move, Box, Check, RefreshCw, Maximize2, Minimize2, Info 
+  ZoomIn, ZoomOut, RotateCcw, Grid, Layers, Download, Printer, Eye, EyeOff, Move, Box, 
+  Compass, Maximize2, Minimize2, Undo, Redo, Armchair, ChevronDown, Check
 } from 'lucide-react';
 import { exportSvgAsPng } from '../../utils/exportUtils';
+import { formatDimension, formatRoomDimensions, formatArea, calculateSetbacks } from '../../utils/cadDimensionUtils';
+import { 
+  CadStaircase, 
+  CadLivingFurniture, 
+  CadDiningFurniture, 
+  CadBedFurniture, 
+  CadToiletFixtures, 
+  CadKitchenFixtures, 
+  CadPoojaAltar, 
+  CadTrueNorthCompass, 
+  CadTitleBlock, 
+  CadDoorSymbol, 
+  CadWindowSymbol, 
+  CadVastuOverlay 
+} from './cad2dSymbols';
 
 export default function FloorPlan2DViewer({ 
   layout, 
@@ -11,7 +27,9 @@ export default function FloorPlan2DViewer({
   isEditMode, 
   setIsEditMode,
   selectedRoomId,
-  setSelectedRoomId 
+  setSelectedRoomId,
+  projectName = "30×40 Standard 2BHK",
+  clientName = "Shri Sharma"
 }) {
   const svgRef = useRef(null);
   const containerRef = useRef(null);
@@ -19,13 +37,24 @@ export default function FloorPlan2DViewer({
   // Floor Active View State: 'ground' | 'first' | 'combined'
   const [activeFloorView, setActiveFloorView] = useState('ground');
 
-  // Controls state
+  // CAD Mode: 'technical_cad' | 'vastu_analysis'
+  const [cadMode, setCadMode] = useState('technical_cad');
+
+  // Unit Mode: 'ft-in' | 'ft' | 'm'
+  const [unitMode, setUnitMode] = useState('ft-in');
+  const [showUnitDropdown, setShowUnitDropdown] = useState(false);
+
+  // Layers and Controls state
   const [zoom, setZoom] = useState(1.0);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [startPan, setStartPan] = useState({ x: 0, y: 0 });
+  
   const [showGrid, setShowGrid] = useState(true);
   const [showDimensions, setShowDimensions] = useState(true);
+  const [showFurniture, setShowFurniture] = useState(true);
+  const [showTitleBlock, setShowTitleBlock] = useState(true);
+  const [showSetbacks, setShowSetbacks] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [hoveredRoom, setHoveredRoom] = useState(null);
 
@@ -42,12 +71,20 @@ export default function FloorPlan2DViewer({
   const firstFloor = floors.find(f => f.floor === 'first') || { rooms: [] };
 
   const isCombined = activeFloorView === 'combined';
-  const separationGap = 25;
+  const separationGap = 30;
+
+  // Setback calculations
+  const setbacks = calculateSetbacks(plotW, plotL);
 
   // Canvas scaling math
-  const padding = 35;
-  const viewWidth = isCombined ? (plotW * 2 + separationGap + padding * 2) : (plotW + padding * 2);
-  const viewHeight = plotL + padding * 2 + 10;
+  const paddingLeft = 14;
+  const paddingRight = 36; // Space for Compass & Title block
+  const paddingTop = 16;   // Space for North Road banner
+  const paddingBottom = 20; // Space for Dimensions
+
+  const singleSheetWidth = plotW + paddingLeft + paddingRight;
+  const viewWidth = isCombined ? (plotW * 2 + separationGap + paddingLeft + paddingRight + 20) : singleSheetWidth;
+  const viewHeight = plotL + paddingTop + paddingBottom + 12;
 
   // Auto Fit-To-Screen on mount or layout change
   useEffect(() => {
@@ -55,12 +92,12 @@ export default function FloorPlan2DViewer({
   }, [plotW, plotL, activeFloorView]);
 
   const handleFitToScreen = () => {
-    setZoom(isCombined ? 0.75 : 1.0);
+    setZoom(isCombined ? 0.7 : 0.95);
     setPan({ x: 0, y: 0 });
   };
 
-  const handleZoomIn = () => setZoom(prev => Math.min(2.5, prev + 0.2));
-  const handleZoomOut = () => setZoom(prev => Math.max(0.4, prev - 0.2));
+  const handleZoomIn = () => setZoom(prev => Math.min(2.8, prev + 0.2));
+  const handleZoomOut = () => setZoom(prev => Math.max(0.35, prev - 0.2));
 
   // Pan handlers
   const handleMouseDown = (e) => {
@@ -76,13 +113,12 @@ export default function FloorPlan2DViewer({
       const svg = svgRef.current;
       if (!svg) return;
       const rect = svg.getBoundingClientRect();
-      const mouseX = ((e.clientX - rect.left - pan.x) / zoom) - padding;
-      const mouseY = ((e.clientY - rect.top - pan.y) / zoom) - padding;
+      const mouseX = ((e.clientX - rect.left - pan.x) / zoom) - paddingLeft;
+      const mouseY = ((e.clientY - rect.top - pan.y) / zoom) - paddingTop;
 
       const newX = Math.max(0, Math.min(plotW - draggingRoom.width, Math.round(mouseX - dragOffset.x)));
       const newY = Math.max(0, Math.min(plotL - draggingRoom.height, Math.round(mouseY - dragOffset.y)));
 
-      // Update room in layout state
       const updatedFloors = floors.map(f => {
         if (f.floor === draggingRoom.floor) {
           return {
@@ -105,66 +141,67 @@ export default function FloorPlan2DViewer({
   // Room Click & Drag Start
   const handleRoomClick = (room, e) => {
     e.stopPropagation();
-    setSelectedRoomId(room.id);
+    setSelectedRoomId && setSelectedRoomId(room.id);
 
     if (isEditMode) {
       const svg = svgRef.current;
       if (!svg) return;
       const rect = svg.getBoundingClientRect();
-      const mouseX = ((e.clientX - rect.left - pan.x) / zoom) - padding;
-      const mouseY = ((e.clientY - rect.top - pan.y) / zoom) - padding;
+      const mouseX = ((e.clientX - rect.left - pan.x) / zoom) - paddingLeft;
+      const mouseY = ((e.clientY - rect.top - pan.y) / zoom) - paddingTop;
       setDraggingRoom(room);
       setDragOffset({ x: mouseX - room.x, y: mouseY - room.y });
     }
   };
 
   /**
-   * Responsive Room Label Layout Logic
-   */
-  const getRoomLabelLayout = (room) => {
-    const rw = room.width;
-    const rh = room.height;
-
-    let displayName = room.name;
-    if (rw < 7 || rh < 6) {
-      if (room.type === 'Bathroom') displayName = 'BATH';
-      else if (room.type === 'Washroom') displayName = 'WC';
-      else if (room.type === 'Living Room') displayName = 'HALL';
-      else if (room.type === 'Master Bedroom') displayName = 'MASTER BED';
-      else if (room.type === 'Staircase') displayName = 'STAIRS';
-      else if (room.type === 'Hallway') displayName = 'HALLWAY';
-      else if (room.type === 'Store Room') displayName = 'STORE';
-    }
-
-    const titleSize = Math.min(1.4, Math.max(0.8, rw / (displayName.length * 0.75)));
-    const dimSize = Math.min(1.1, Math.max(0.7, rw / 11));
-    const areaSize = Math.min(0.9, Math.max(0.6, rw / 13));
-
-    const showArea = rh >= 4.5 && rw >= 5;
-    const showDim = rh >= 3.5 && rw >= 4;
-
-    return {
-      displayName,
-      titleSize,
-      dimSize,
-      areaSize,
-      showDim,
-      showArea
-    };
-  };
-
-  /**
-   * Professional Palette per Room Category
+   * Professional Room Palette (Crisp CAD styling)
    */
   const getRoomFillColor = (room) => {
     const type = room.type;
-    if (['Bedroom', 'Master Bedroom', 'Study Room'].includes(type)) return '#eff6ff'; // Soft blue
-    if (['Kitchen'].includes(type)) return '#fffbe0'; // Soft warm yellow
-    if (['Bathroom', 'Washroom'].includes(type)) return '#f1f5f9'; // Soft slate
-    if (['Living Room', 'Hall', 'Dining Room'].includes(type)) return '#f8fafc'; // Soft neutral
-    if (['Balcony'].includes(type)) return '#f0fdf4'; // Soft green
-    if (['Staircase'].includes(type)) return '#faf5ff'; // Soft purple
-    return '#f8fafc';
+    if (['Bedroom', 'Master Bedroom', 'Study Room'].includes(type)) return '#f8fafc';
+    if (['Kitchen'].includes(type)) return '#fffbeb';
+    if (['Bathroom', 'Washroom'].includes(type)) return '#f1f5f9';
+    if (['Living Room', 'Hall', 'Dining Room'].includes(type)) return '#ffffff';
+    if (['Balcony'].includes(type)) return '#f0fdf4';
+    if (['Staircase'].includes(type)) return '#f5f3ff';
+    if (['Pooja Room'].includes(type)) return '#fffdf0';
+    return '#ffffff';
+  };
+
+  /**
+   * Render Furniture & Fixtures inside a room based on its type
+   */
+  const renderRoomFurniture = (room) => {
+    if (!showFurniture) return null;
+    const type = room.type;
+    const rx = room.x;
+    const ry = room.y;
+    const rw = room.width;
+    const rh = room.height;
+
+    if (type === 'Staircase') {
+      return <CadStaircase key={`stair-${room.id}`} x={rx} y={ry} width={rw} height={rh} />;
+    }
+    if (type === 'Living Room' || type === 'Hall') {
+      return <CadLivingFurniture key={`living-${room.id}`} x={rx} y={ry} width={rw} height={rh} />;
+    }
+    if (type === 'Dining Room') {
+      return <CadDiningFurniture key={`dining-${room.id}`} x={rx} y={ry} width={rw} height={rh} />;
+    }
+    if (['Master Bedroom', 'Bedroom', 'Study Room'].includes(type)) {
+      return <CadBedFurniture key={`bed-${room.id}`} x={rx} y={ry} width={rw} height={rh} />;
+    }
+    if (['Bathroom', 'Washroom'].includes(type)) {
+      return <CadToiletFixtures key={`toilet-${room.id}`} x={rx} y={ry} width={rw} height={rh} />;
+    }
+    if (type === 'Kitchen') {
+      return <CadKitchenFixtures key={`kitchen-${room.id}`} x={rx} y={ry} width={rw} height={rh} />;
+    }
+    if (type === 'Pooja Room') {
+      return <CadPoojaAltar key={`pooja-${room.id}`} x={rx} y={ry} width={rw} height={rh} />;
+    }
+    return null;
   };
 
   /**
@@ -195,31 +232,88 @@ export default function FloorPlan2DViewer({
     return (
       <g transform={`translate(${offsetX}, ${offsetY})`} key={floorType}>
         
-        {/* FLOOR HEADER BANNER */}
-        <g transform="translate(0, -7.5)" className="pointer-events-none select-none font-sans">
-          <rect 
-            x="0" 
-            y="0" 
-            width={plotW} 
-            height="4.5" 
-            fill={isGround ? '#0284c7' : '#4f46e5'} 
-            rx="0.6" 
-            className="shadow-md" 
-          />
-          <text 
-            x={plotW / 2} 
-            y="2.8" 
-            fill="#ffffff" 
-            fontSize="1.6" 
-            fontWeight="900" 
-            textAnchor="middle" 
-            className="tracking-widest uppercase font-mono"
-          >
-            {floorTitle} ({plotW} × {plotL} {plot.unit})
-          </text>
-        </g>
+        {/* 1. MAIN ROAD INDICATOR BANNER (TOP) */}
+        {isGround && (
+          <g transform={`translate(0, -11)`} className="pointer-events-none select-none font-sans">
+            <line x1="-6" y1="0" x2={plotW + 6} y2="0" stroke="#64748b" strokeWidth="0.5" strokeDasharray="2 1" />
+            <line x1="-6" y1="4.5" x2={plotW + 6} y2="4.5" stroke="#94a3b8" strokeWidth="0.3" />
+            
+            <rect 
+              x={plotW / 2 - 14} 
+              y="0.8" 
+              width="28" 
+              height="3.2" 
+              fill="#ffffff" 
+              stroke="#0f172a" 
+              strokeWidth="0.25"
+              rx="0.4" 
+              className="shadow-sm" 
+            />
+            <text 
+              x={plotW / 2} 
+              y="2.9" 
+              fill="#0f172a" 
+              fontSize="1.15" 
+              fontWeight="900" 
+              textAnchor="middle" 
+              className="tracking-widest uppercase font-mono"
+            >
+              MAIN ROAD (NORTH)
+            </text>
+          </g>
+        )}
 
-        {/* Outer Architectural Plot Boundary Wall */}
+        {/* 2. PLOT SETBACK ENVELOPE (DASHED BLUE BOUNDARY) */}
+        {showSetbacks && (
+          <g className="pointer-events-none select-none font-mono">
+            <rect
+              x={-setbacks.sideLeft}
+              y={-setbacks.front}
+              width={setbacks.envelopeWidth}
+              height={setbacks.envelopeLength}
+              fill="none"
+              stroke="#0284c7"
+              strokeWidth="0.35"
+              strokeDasharray="1.2 0.8"
+            />
+            
+            <text
+              x={plotW / 2}
+              y={-setbacks.front - 1.2}
+              fill="#0369a1"
+              fontSize="0.85"
+              fontWeight="800"
+              textAnchor="middle"
+            >
+              {formatDimension(setbacks.envelopeWidth, unitMode)} (FRONT SETBACK: {formatDimension(setbacks.front, unitMode)})
+            </text>
+
+            <text
+              x={-setbacks.sideLeft - 1.2}
+              y={plotL / 2}
+              fill="#0369a1"
+              fontSize="0.85"
+              fontWeight="800"
+              textAnchor="middle"
+              transform={`rotate(-90, ${-setbacks.sideLeft - 1.2}, ${plotL / 2})`}
+            >
+              {formatDimension(setbacks.envelopeLength, unitMode)}
+            </text>
+
+            <text
+              x={plotW / 2}
+              y={plotL + setbacks.rear + 2.0}
+              fill="#64748b"
+              fontSize="0.75"
+              fontWeight="700"
+              textAnchor="middle"
+            >
+              REAR SETBACK: {formatDimension(setbacks.rear, unitMode)}
+            </text>
+          </g>
+        )}
+
+        {/* 3. OUTER ARCHITECTURAL PLOT BOUNDARY WALL (IS 962 CAD DOUBLE WALL) */}
         <rect
           x="0"
           y="0"
@@ -227,59 +321,37 @@ export default function FloorPlan2DViewer({
           height={plotL}
           fill="#ffffff"
           stroke="#0f172a"
-          strokeWidth="1.4"
+          strokeWidth="0.8"
           className="shadow-xl"
         />
 
-        {/* ACCESS BADGES */}
-        {isGround ? (
-          (() => {
-            const entryDoor = floorRooms
-              .flatMap((r) => (r.doors || []).map((d) => ({ room: r, door: d })))
-              .find(({ door }) => door.isMainEntry);
-            const badgeX = entryDoor
-              ? entryDoor.door.x + (entryDoor.door.width || 3.5) / 2 - 4.5
-              : plotW / 2 - 4.5;
-            return (
-              <g transform={`translate(${badgeX}, -2.2)`}>
-                <rect x="0" y="0" width="9" height="1.6" fill="#0284c7" rx="0.4" className="shadow-md" />
-                <text x="4.5" y="1.1" fill="#ffffff" fontSize="0.85" fontWeight="900" textAnchor="middle" className="font-sans tracking-widest">
-                  ▲ MAIN ENTRY
-                </text>
-              </g>
-            );
-          })()
-        ) : (
-          (() => {
-            const stair = floorRooms.find((r) => r.type === 'Staircase');
-            const stairX = stair ? stair.x + stair.width / 2 - 5.5 : plotW - 12;
-            const stairY = stair ? stair.y + stair.height + 0.8 : plotL + 0.8;
-            return (
-              <g transform={`translate(${stairX}, ${stairY})`}>
-                <rect x="0" y="0" width="11" height="1.6" fill="#6d28d9" rx="0.4" className="shadow-md" />
-                <text x="5.5" y="1.1" fill="#ffffff" fontSize="0.8" fontWeight="900" textAnchor="middle" className="font-sans tracking-wider">
-                  ▲ STAIRCASE ARRIVAL
-                </text>
-              </g>
-            );
-          })()
+        {/* 4. VASTU 9-ZONE OVERLAY (IF ACTIVE) */}
+        {cadMode === 'vastu_analysis' && (
+          <CadVastuOverlay plotW={plotW} plotL={plotL} />
         )}
 
-        {/* RENDER ROOMS */}
-        {floorRooms.map((room) => {
+        {/* 5. RENDER ROOMS */}
+        {floorRooms.map((room, rIdx) => {
           const rx = Math.round(room.x * 10) / 10;
           const ry = Math.round(room.y * 10) / 10;
           const rw = Math.round(room.width * 10) / 10;
           const rh = Math.round(room.height * 10) / 10;
-          const roomArea = Math.round((rw * rh) * 10) / 10;
+          const roomArea = Math.round((rw * rh) * 100) / 100;
           const isSelected = selectedRoomId === room.id;
 
-          const { displayName, titleSize, dimSize, areaSize, showDim, showArea } = getRoomLabelLayout(room);
           const fillColor = getRoomFillColor(room);
+          const isStairs = room.type === 'Staircase';
+
+          const titleSize = Math.min(1.3, Math.max(0.75, rw / (room.name.length * 0.75)));
+          const dimSize = Math.min(1.0, Math.max(0.65, rw / 11));
+          const areaSize = Math.min(0.85, Math.max(0.55, rw / 13));
+
+          const showArea = rh >= 4.0 && rw >= 4.5;
+          const showDim = rh >= 3.0 && rw >= 3.5;
 
           return (
             <g 
-              key={room.id} 
+              key={room.id || rIdx} 
               onClick={(e) => handleRoomClick(room, e)}
               onMouseEnter={() => setHoveredRoom(room)}
               onMouseLeave={() => setHoveredRoom(null)}
@@ -291,223 +363,128 @@ export default function FloorPlan2DViewer({
                 y={ry}
                 width={rw}
                 height={rh}
-                fill={fillColor}
-                stroke={isSelected ? '#0284c7' : '#334155'}
-                strokeWidth={isSelected ? '1.2' : '0.6'}
-                rx="0.1"
+                fill={isStairs ? '#faf5ff' : fillColor}
+                stroke={isSelected ? '#0284c7' : '#0f172a'}
+                strokeWidth={isSelected ? '0.9' : '0.45'}
               />
 
-              {/* Kitchen Counter & Stoves */}
-              {room.type === 'Kitchen' && rw >= 6 && rh >= 5 && (
-                <g opacity="0.35">
-                  <rect x={rx + 0.3} y={ry + 0.3} width={rw - 0.6} height="1.2" fill="#d97706" rx="0.2" />
-                  <circle cx={rx + 1.5} cy={ry + 0.9} r="0.4" fill="#ffffff" />
-                  <circle cx={rx + 3.0} cy={ry + 0.9} r="0.4" fill="#ffffff" />
-                </g>
-              )}
+              {/* 2D Architectural Furniture & Fixtures */}
+              {renderRoomFurniture(room)}
 
-              {/* Bathroom WC */}
-              {(room.type === 'Bathroom' || room.type === 'Washroom') && rw >= 4 && rh >= 4 && (
-                <g opacity="0.35" transform={`translate(${rx + 0.5}, ${ry + 0.5})`}>
-                  <rect x="0" y="0" width="1.2" height="1.6" fill="#0284c7" rx="0.4" />
-                  <circle cx="0.6" cy="1.0" r="0.4" fill="#ffffff" />
-                </g>
-              )}
-
-              {/* Living Room Sofa */}
-              {(room.type === 'Living Room' || room.type === 'Hall') && rw >= 10 && rh >= 8 && (
-                <g opacity="0.25" transform={`translate(${rx + 0.8}, ${ry + 0.8})`}>
-                  <rect x="0" y="0" width="3.5" height="1.4" fill="#475569" rx="0.3" />
-                  <rect x="0.2" y="0.2" width="3.1" height="0.6" fill="#ffffff" rx="0.2" />
-                </g>
-              )}
-
-              {/* Dining Table */}
-              {room.type === 'Dining Room' && rw >= 8 && rh >= 7 && (
-                <g opacity="0.25" transform={`translate(${rx + rw - 3.5}, ${ry + 0.8})`}>
-                  <rect x="0" y="0" width="2.8" height="1.8" fill="#78350f" rx="0.3" />
-                </g>
-              )}
-
-              {/* Text Hierarchy */}
-              <g className="pointer-events-none select-none">
-                <text
-                  x={rx + rw / 2}
-                  y={ry + rh / 2 - (showDim ? (showArea ? 1.0 : 0.4) : 0)}
-                  fill="#0f172a"
-                  fontSize={titleSize}
-                  fontWeight="900"
-                  textAnchor="middle"
-                  className="font-sans tracking-wide"
-                >
-                  {displayName.toUpperCase()}
-                </text>
-
-                {showDimensions && showDim && (
+              {/* Room Text Label Group */}
+              {!isStairs && (
+                <g className="pointer-events-none select-none">
                   <text
                     x={rx + rw / 2}
-                    y={ry + rh / 2 + 0.8}
-                    fill="#0369a1"
-                    fontSize={dimSize}
-                    fontWeight="800"
+                    y={ry + rh / 2 - (showDim ? (showArea ? 0.9 : 0.4) : 0)}
+                    fill="#0f172a"
+                    fontSize={titleSize}
+                    fontWeight="900"
                     textAnchor="middle"
-                    className="font-mono"
+                    className="font-sans font-black tracking-wider uppercase"
                   >
-                    {rw} × {rh} {plot.unit}
+                    {room.name}
                   </text>
-                )}
 
-                {showDimensions && showArea && (
-                  <text
-                    x={rx + rw / 2}
-                    y={ry + rh / 2 + 2.0}
-                    fill="#64748b"
-                    fontSize={areaSize}
-                    fontWeight="600"
-                    textAnchor="middle"
-                    className="font-sans font-semibold"
-                  >
-                    {roomArea} sq.{plot.unit}
-                  </text>
-                )}
-              </g>
+                  {showDimensions && showDim && (
+                    <text
+                      x={rx + rw / 2}
+                      y={ry + rh / 2 + 0.7}
+                      fill="#334155"
+                      fontSize={dimSize}
+                      fontWeight="800"
+                      textAnchor="middle"
+                      className="font-mono font-bold"
+                    >
+                      {formatRoomDimensions(rw, rh, unitMode)}
+                    </text>
+                  )}
 
-              {/* Staircase Steps */}
-              {room.type === 'Staircase' && (
-                <g opacity="0.6">
-                  {[...Array(7)].map((_, i) => (
-                    <line
-                      key={i}
-                      x1={rx + 0.5}
-                      y1={ry + (rh / 7) * i}
-                      x2={rx + rw - 0.5}
-                      y2={ry + (rh / 7) * i}
-                      stroke="#6d28d9"
-                      strokeWidth="0.2"
-                    />
-                  ))}
-                  <text x={rx + rw / 2} y={ry + rh - 0.6} fill="#6d28d9" fontSize="0.9" fontWeight="900" textAnchor="middle">
-                    ↑ UP
-                  </text>
+                  {showDimensions && showArea && (
+                    <text
+                      x={rx + rw / 2}
+                      y={ry + rh / 2 + 1.9}
+                      fill="#64748b"
+                      fontSize={areaSize}
+                      fontWeight="700"
+                      textAnchor="middle"
+                      className="font-mono"
+                    >
+                      {formatArea(roomArea, unitMode)}
+                    </text>
+                  )}
                 </g>
               )}
 
-              {/* Balcony Railing */}
-              {room.type === 'Balcony' && (
-                <rect
-                  x={rx + 0.2}
-                  y={ry + 0.2}
-                  width={rw - 0.4}
-                  height={rh - 0.4}
-                  fill="none"
-                  stroke="#059669"
-                  strokeWidth="0.25"
-                  strokeDasharray="0.4 0.4"
+              {/* Doors with Radial Dashed Swing Arcs */}
+              {(room.doors || []).map((door, dIdx) => (
+                <CadDoorSymbol
+                  key={`door-${dIdx}`}
+                  door={door}
+                  roomX={rx}
+                  roomY={ry}
+                  roomW={rw}
+                  roomH={rh}
+                  index={dIdx + 1}
                 />
-              )}
+              ))}
 
-              {/* Doors with Swing Arcs */}
-              {(room.doors || []).map((door, idx) => {
-                const dw = door.width || 3;
-                const wall = door.wall || 'north';
-                const vertical = wall === 'east' || wall === 'west';
-                const swing = door.swing_direction || (vertical ? 'in_right' : 'in_bottom');
-
-                let rectProps;
-                let arcPath;
-                if (vertical) {
-                  rectProps = { x: door.x - 0.25, y: door.y, width: 0.5, height: dw };
-                  if (swing === 'in_left' || wall === 'east') {
-                    arcPath = `M ${door.x} ${door.y} A ${dw} ${dw} 0 0 0 ${door.x - dw} ${door.y + dw}`;
-                  } else {
-                    arcPath = `M ${door.x} ${door.y} A ${dw} ${dw} 0 0 1 ${door.x + dw} ${door.y + dw}`;
-                  }
-                } else {
-                  rectProps = { x: door.x, y: door.y - 0.25, width: Math.min(dw, rw - 0.5), height: 0.5 };
-                  if (swing === 'in_top' || swing === 'north') {
-                    arcPath = `M ${door.x} ${door.y} A ${dw} ${dw} 0 0 0 ${door.x + dw} ${door.y - dw}`;
-                  } else {
-                    arcPath = `M ${door.x} ${door.y} A ${dw} ${dw} 0 0 1 ${door.x + dw} ${door.y + dw}`;
-                  }
-                }
-
-                return (
-                  <g key={idx}>
-                    <rect {...rectProps} fill={door.isMainEntry ? '#0284c7' : '#d97706'} />
-                    <path
-                      d={arcPath}
-                      fill="none"
-                      stroke={door.isMainEntry ? '#0284c7' : '#d97706'}
-                      strokeWidth="0.2"
-                      strokeDasharray="0.4 0.2"
-                    />
-                  </g>
-                );
-              })}
-
-              {/* Windows */}
-              {(room.windows || []).map((win, idx) => {
-                const ww = Math.min(win.width || 4, rw - 1);
-                return (
-                  <rect
-                    key={idx}
-                    x={win.x}
-                    y={win.y - 0.3}
-                    width={ww}
-                    height="0.6"
-                    fill="#38bdf8"
-                    stroke="#0284c7"
-                    strokeWidth="0.2"
-                  />
-                );
-              })}
+              {/* Windows with Double Sill Lines and Tags */}
+              {(room.windows || []).map((win, wIdx) => (
+                <CadWindowSymbol
+                  key={`win-${wIdx}`}
+                  win={win}
+                  roomX={rx}
+                  roomY={ry}
+                  roomW={rw}
+                  roomH={rh}
+                  index={wIdx + 1}
+                />
+              ))}
 
             </g>
           );
         })}
 
-        {/* STRUCTURAL RCC COLUMNS */}
+        {/* 6. STRUCTURAL RCC COLUMNS */}
         <g className="pointer-events-none select-none">
           {columnPoints.map((col, i) => (
             <g key={i}>
               <rect
-                x={col.x - 0.4}
-                y={col.y - 0.4}
-                width="0.8"
-                height="0.8"
+                x={col.x - 0.45}
+                y={col.y - 0.45}
+                width="0.9"
+                height="0.9"
                 fill="#0f172a"
-                stroke="#38bdf8"
+                stroke="#0f172a"
                 strokeWidth="0.1"
-                rx="0.05"
               />
-              <line x1={col.x - 0.3} y1={col.y - 0.3} x2={col.x + 0.3} y2={col.y + 0.3} stroke="#ffffff" strokeWidth="0.08" />
-              <line x1={col.x - 0.3} y1={col.y + 0.3} x2={col.x + 0.3} y2={col.y - 0.3} stroke="#ffffff" strokeWidth="0.08" />
+              <line x1={col.x - 0.35} y1={col.y - 0.35} x2={col.x + 0.35} y2={col.y + 0.35} stroke="#ffffff" strokeWidth="0.08" />
+              <line x1={col.x - 0.35} y1={col.y + 0.35} x2={col.x + 0.35} y2={col.y - 0.35} stroke="#ffffff" strokeWidth="0.08" />
             </g>
           ))}
         </g>
 
-        {/* DIMENSION LINES */}
+        {/* 7. OVERALL PLOT DIMENSION LINES */}
         {showDimensions && (
-          <g className="font-mono select-none">
-            {/* Width Dimension Line */}
-            <line x1="0" y1={plotL + 4} x2={plotW} y2={plotL + 4} stroke="#0284c7" strokeWidth="0.3" />
-            <line x1="0" y1={plotL + 2.5} x2="0" y2={plotL + 5.5} stroke="#0284c7" strokeWidth="0.3" />
-            <line x1={plotW} y1={plotL + 2.5} x2={plotW} y2={plotL + 5.5} stroke="#0284c7" strokeWidth="0.3" />
+          <g className="font-mono select-none pointer-events-none">
+            <line x1="0" y1={plotL + 5.5} x2={plotW} y2={plotL + 5.5} stroke="#0f172a" strokeWidth="0.25" />
+            <line x1="0" y1={plotL + 4.0} x2="0" y2={plotL + 7.0} stroke="#0f172a" strokeWidth="0.25" />
+            <line x1={plotW} y1={plotL + 4.0} x2={plotW} y2={plotL + 7.0} stroke="#0f172a" strokeWidth="0.25" />
             
-            <rect x={plotW / 2 - 8} y={plotL + 2.5} width="16" height="3" fill="#e0f2fe" stroke="#0284c7" strokeWidth="0.2" rx="0.6" />
-            <text x={plotW / 2} y={plotL + 4.5} fill="#0369a1" fontSize="1.3" fontWeight="800" textAnchor="middle">
-              WIDTH: {plotW} {plot.unit}
+            <rect x={plotW / 2 - 7} y={plotL + 4.0} width="14" height="2.8" fill="#ffffff" stroke="#0f172a" strokeWidth="0.18" rx="0.3" />
+            <text x={plotW / 2} y={plotL + 5.8} fill="#0f172a" fontSize="1.1" fontWeight="900" textAnchor="middle">
+              {formatDimension(plotW, unitMode)}
             </text>
 
-            {/* Length Dimension Line */}
-            <line x1={plotW + 4} y1="0" x2={plotW + 4} y2={plotL} stroke="#0284c7" strokeWidth="0.3" />
-            <line x1={plotW + 2.5} y1="0" x2={plotW + 5.5} y2="0" stroke="#0284c7" strokeWidth="0.3" />
-            <line x1={plotW + 2.5} y1={plotL} x2={plotW + 5.5} y2={plotL} stroke="#0284c7" strokeWidth="0.3" />
+            <line x1={plotW + 5.5} y1="0" x2={plotW + 5.5} y2={plotL} stroke="#0f172a" strokeWidth="0.25" />
+            <line x1={plotW + 4.0} y1="0" x2={plotW + 7.0} y2="0" stroke="#0f172a" strokeWidth="0.25" />
+            <line x1={plotW + 4.0} y1={plotL} x2={plotW + 7.0} y2={plotL} stroke="#0f172a" strokeWidth="0.25" />
 
-            <g transform={`translate(${plotW + 6.5}, ${plotL / 2}) rotate(90)`}>
-              <rect x="-8" y="-1.5" width="16" height="3" fill="#e0f2fe" stroke="#0284c7" strokeWidth="0.2" rx="0.6" />
-              <text x="0" y="0.5" fill="#0369a1" fontSize="1.3" fontWeight="800" textAnchor="middle">
-                LENGTH: {plotL} {plot.unit}
+            <g transform={`translate(${plotW + 5.5}, ${plotL / 2}) rotate(90)`}>
+              <rect x="-7" y="-1.4" width="14" height="2.8" fill="#ffffff" stroke="#0f172a" strokeWidth="0.18" rx="0.3" />
+              <text x="0" y="0.5" fill="#0f172a" fontSize="1.1" fontWeight="900" textAnchor="middle">
+                {formatDimension(plotL, unitMode)}
               </text>
             </g>
           </g>
@@ -521,21 +498,90 @@ export default function FloorPlan2DViewer({
     <div 
       ref={containerRef}
       className={`flex flex-col h-full bg-slate-100 border border-slate-200 overflow-hidden shadow-inner relative select-none ${
-        isFullscreen ? 'fixed inset-0 z-50 rounded-none bg-slate-900/95 p-4' : 'rounded-2xl'
+        isFullscreen ? 'fixed inset-0 z-50 rounded-none bg-slate-900' : 'rounded-2xl'
       }`}
     >
       
-      {/* TOP CONTROLS & FLOOR SWITCHER TOOLBAR */}
-      <div className="bg-white border-b border-slate-200 p-3 flex flex-wrap items-center justify-between gap-3 shrink-0 z-10 shadow-sm rounded-t-xl">
+      {/* 1. TOP CAD TOOLBAR & CONTROLS */}
+      <div className="bg-white border-b border-slate-200 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 shrink-0 z-10 shadow-sm rounded-t-xl">
         
-        {/* FLOOR SWITCHER CARDS */}
+        {/* Left Section: Rev, Undo, Redo, Units Selector */}
+        <div className="flex items-center gap-2">
+          {/* Revision Badge */}
+          <span className="px-2.5 py-1 bg-slate-100 border border-slate-300 text-slate-700 text-xs font-mono font-bold rounded-lg">
+            Rev: 00
+          </span>
+
+          {/* Units Selector Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setShowUnitDropdown(!showUnitDropdown)}
+              className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-800 text-xs font-mono font-bold rounded-xl flex items-center gap-1.5 transition"
+            >
+              <span>Units: <span className="text-sky-700">{unitMode === 'ft-in' ? "Ft-In (12'-6\")" : unitMode === 'm' ? "Meters (m)" : "Ft (12.5')"}</span></span>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
+            </button>
+
+            {showUnitDropdown && (
+              <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl py-1 z-30 min-w-[160px] font-mono text-xs">
+                <button
+                  onClick={() => { setUnitMode('ft-in'); setShowUnitDropdown(false); }}
+                  className={`w-full px-3 py-1.5 text-left flex items-center justify-between hover:bg-slate-50 ${unitMode === 'ft-in' ? 'font-bold text-sky-700 bg-sky-50' : 'text-slate-700'}`}
+                >
+                  <span>Ft-In (12'-6")</span>
+                  {unitMode === 'ft-in' && <Check className="w-3.5 h-3.5" />}
+                </button>
+                <button
+                  onClick={() => { setUnitMode('ft'); setShowUnitDropdown(false); }}
+                  className={`w-full px-3 py-1.5 text-left flex items-center justify-between hover:bg-slate-50 ${unitMode === 'ft' ? 'font-bold text-sky-700 bg-sky-50' : 'text-slate-700'}`}
+                >
+                  <span>Decimal Ft (12.5')</span>
+                  {unitMode === 'ft' && <Check className="w-3.5 h-3.5" />}
+                </button>
+                <button
+                  onClick={() => { setUnitMode('m'); setShowUnitDropdown(false); }}
+                  className={`w-full px-3 py-1.5 text-left flex items-center justify-between hover:bg-slate-50 ${unitMode === 'm' ? 'font-bold text-sky-700 bg-sky-50' : 'text-slate-700'}`}
+                >
+                  <span>Meters (m)</span>
+                  {unitMode === 'm' && <Check className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Mode Pill Badges */}
+          <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
+            <button
+              onClick={() => setCadMode('technical_cad')}
+              className={`px-3 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
+                cadMode === 'technical_cad' 
+                  ? 'bg-slate-900 text-white shadow-sm' 
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Eye className="w-3.5 h-3.5" /> Technical CAD (IS 962)
+            </button>
+            <button
+              onClick={() => setCadMode('vastu_analysis')}
+              className={`px-3 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
+                cadMode === 'vastu_analysis' 
+                  ? 'bg-teal-700 text-white shadow-sm' 
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Compass className="w-3.5 h-3.5" /> Vastu Analysis
+            </button>
+          </div>
+        </div>
+
+        {/* Floor Switcher */}
         <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
           <button
             onClick={() => setActiveFloorView('ground')}
-            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
+            className={`px-3 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
               activeFloorView === 'ground' 
                 ? 'bg-sky-600 text-white shadow-sm' 
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
           >
             <Layers className="w-3.5 h-3.5" /> Ground Floor
@@ -544,10 +590,10 @@ export default function FloorPlan2DViewer({
           {floors.some(f => f.floor === 'first') && (
             <button
               onClick={() => setActiveFloorView('first')}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
+              className={`px-3 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
                 activeFloorView === 'first' 
                   ? 'bg-sky-600 text-white shadow-sm' 
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <Layers className="w-3.5 h-3.5" /> First Floor
@@ -557,34 +603,24 @@ export default function FloorPlan2DViewer({
           {floors.length > 1 && (
             <button
               onClick={() => setActiveFloorView('combined')}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
+              className={`px-3 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
                 activeFloorView === 'combined' 
                   ? 'bg-slate-900 text-white shadow-sm' 
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              <Box className="w-3.5 h-3.5" /> Combined (Side-by-Side)
+              <Box className="w-3.5 h-3.5" /> Dual Sheet
             </button>
           )}
         </div>
 
-        {/* ARCHITECTURAL TITLE BANNER */}
-        <div className="hidden md:flex items-center gap-2 font-mono text-xs text-slate-700 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 font-bold">
-          <span className="text-sky-700 uppercase tracking-wider">
-            {activeFloorView === 'ground' ? 'GROUND FLOOR PLAN' : activeFloorView === 'first' ? 'FIRST FLOOR PLAN' : 'DUAL BLUEPRINT SHEET: GROUND + FIRST'}
-          </span>
-          <span className="text-slate-400">|</span>
-          <span>{plotW} × {plotL} {plot.unit}</span>
-          <span className="text-slate-400">|</span>
-          <span>{plotW * plotL * (isCombined ? 2 : 1)} sq.{plot.unit}</span>
-        </div>
-
-        {/* VIEWPORT CONTROLS */}
+        {/* Viewport & Export Controls */}
         <div className="flex items-center gap-2">
+          {/* Zoom Controls */}
           <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
             <button 
               onClick={handleZoomIn} 
-              className="p-1.5 text-slate-700 hover:bg-white rounded-lg transition" 
+              className="p-1 text-slate-700 hover:bg-white rounded-lg transition" 
               title="Zoom In"
             >
               <ZoomIn className="w-4 h-4" />
@@ -592,34 +628,47 @@ export default function FloorPlan2DViewer({
             <span className="px-2 text-xs font-mono font-bold text-slate-700">{Math.round(zoom * 100)}%</span>
             <button 
               onClick={handleZoomOut} 
-              className="p-1.5 text-slate-700 hover:bg-white rounded-lg transition" 
+              className="p-1 text-slate-700 hover:bg-white rounded-lg transition" 
               title="Zoom Out"
             >
               <ZoomOut className="w-4 h-4" />
             </button>
             <button 
               onClick={handleFitToScreen} 
-              className="p-1.5 text-slate-700 hover:bg-white rounded-lg transition ml-1 flex items-center gap-1 px-2" 
+              className="p-1 text-slate-700 hover:bg-white rounded-lg transition ml-1 flex items-center gap-1 px-1.5" 
               title="Fit to Screen"
             >
-              <RotateCcw className="w-3.5 h-3.5" />
+              <RotateCcw className="w-3 h-3" />
               <span className="text-[10px] font-bold">Fit</span>
             </button>
           </div>
 
+          {/* Toggle Furniture */}
+          <button
+            onClick={() => setShowFurniture(!showFurniture)}
+            className={`p-1.5 rounded-xl text-xs font-semibold border transition ${
+              showFurniture ? 'bg-sky-50 border-sky-300 text-sky-700' : 'bg-white border-slate-200 text-slate-600'
+            }`}
+            title="Toggle 2D CAD Furniture"
+          >
+            <Armchair className="w-4 h-4" />
+          </button>
+
+          {/* Toggle Grid */}
           <button
             onClick={() => setShowGrid(!showGrid)}
-            className={`p-2 rounded-xl text-xs font-semibold border transition ${
+            className={`p-1.5 rounded-xl text-xs font-semibold border transition ${
               showGrid ? 'bg-sky-50 border-sky-300 text-sky-700' : 'bg-white border-slate-200 text-slate-600'
             }`}
-            title="Toggle Blueprint Grid"
+            title="Toggle Grid"
           >
             <Grid className="w-4 h-4" />
           </button>
 
+          {/* Toggle Dimensions */}
           <button
             onClick={() => setShowDimensions(!showDimensions)}
-            className={`p-2 rounded-xl text-xs font-semibold border transition ${
+            className={`p-1.5 rounded-xl text-xs font-semibold border transition ${
               showDimensions ? 'bg-sky-50 border-sky-300 text-sky-700' : 'bg-white border-slate-200 text-slate-600'
             }`}
             title="Toggle Dimensions"
@@ -627,31 +676,35 @@ export default function FloorPlan2DViewer({
             {showDimensions ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
           </button>
 
+          {/* Edit Mode Toggle */}
           <button
             onClick={() => setIsEditMode(!isEditMode)}
             className={`px-3 py-1.5 text-xs font-bold rounded-xl border transition flex items-center gap-1.5 ${
               isEditMode ? 'bg-amber-500 border-amber-600 text-white shadow-md' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
             }`}
           >
-            <Move className="w-3.5 h-3.5" /> {isEditMode ? 'Exit Edit' : 'Drag & Edit'}
+            <Move className="w-3.5 h-3.5" /> {isEditMode ? 'Exit Edit' : 'Edit Rooms'}
           </button>
 
+          {/* Fullscreen Mode */}
           <button
             onClick={() => setIsFullscreen(!isFullscreen)}
-            className="p-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl transition"
-            title="Fullscreen Presentation Mode"
+            className="p-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl transition"
+            title="Fullscreen Mode"
           >
             {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
 
+          {/* High-Res PNG Export */}
           <button
-            onClick={() => exportSvgAsPng(svgRef.current, `${layout.projectName || 'Layout'}-2D.png`)}
-            className="p-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl transition"
-            title="Export High-Res PNG"
+            onClick={() => exportSvgAsPng(svgRef.current, `${layout.projectName || 'Architectural_FloorPlan'}-2D-CAD.png`, 2400, 1800)}
+            className="p-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl transition"
+            title="Export High-Res CAD PNG"
           >
             <Download className="w-4 h-4" />
           </button>
 
+          {/* 3D Switcher */}
           <button
             onClick={onSwitchTo3D}
             className="px-3.5 py-1.5 bg-sky-600 hover:bg-sky-500 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-1.5 transition"
@@ -662,9 +715,9 @@ export default function FloorPlan2DViewer({
 
       </div>
 
-      {/* MAIN SVG CANVAS WORKSPACE */}
+      {/* 2. MAIN CAD SVG CANVAS WORKSPACE */}
       <div 
-        className="flex-1 w-full h-full overflow-hidden bg-slate-50 cursor-grab active:cursor-grabbing relative flex items-center justify-center"
+        className="flex-1 w-full h-full overflow-hidden bg-slate-200/60 cursor-grab active:cursor-grabbing relative flex items-center justify-center"
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
@@ -679,76 +732,90 @@ export default function FloorPlan2DViewer({
           }}
         >
           <defs>
-            <pattern id="archGrid" width="2" height="2" patternUnits="userSpaceOnUse">
-              <path d="M 2 0 L 0 0 0 2" fill="none" stroke="#e2e8f0" strokeWidth="0.08" />
+            <pattern id="cadGrid" width="2.5" height="2.5" patternUnits="userSpaceOnUse">
+              <path d="M 2.5 0 L 0 0 0 2.5" fill="none" stroke="#e2e8f0" strokeWidth="0.08" />
             </pattern>
           </defs>
 
-          {/* Blueprint Grid */}
+          {/* Background Drafting Sheet */}
+          <rect 
+            x="2" 
+            y="2" 
+            width={viewWidth - 4} 
+            height={viewHeight - 4} 
+            fill="#ffffff" 
+            stroke="#cbd5e1" 
+            strokeWidth="0.3"
+            rx="0.5" 
+          />
+
+          {/* Blueprint Fine Coordinate Grid */}
           {showGrid && (
             <rect 
-              x="0" 
-              y="0" 
-              width={viewWidth} 
-              height={viewHeight} 
-              fill="url(#archGrid)" 
+              x="2" 
+              y="2" 
+              width={viewWidth - 4} 
+              height={viewHeight - 4} 
+              fill="url(#cadGrid)" 
             />
           )}
 
-          {/* NORTH ARROW ARCHITECTURAL COMPASS */}
-          <g transform={`translate(${viewWidth - 16}, 10)`} className="pointer-events-none select-none">
-            <circle cx="6" cy="6" r="5" fill="#ffffff" stroke="#0f172a" strokeWidth="0.3" className="shadow-sm" />
-            <polygon points="6,2 4.5,6.5 6,5.5 7.5,6.5" fill="#ef4444" />
-            <polygon points="6,10 4.5,5.5 6,6.5 7.5,5.5" fill="#334155" />
-            <text x="6" y="1.2" fill="#0f172a" fontSize="1.4" fontWeight="900" textAnchor="middle" className="font-mono">N</text>
-          </g>
+          {/* TRUE NORTH DRAFTING COMPASS (TOP RIGHT CORNER) */}
+          <CadTrueNorthCompass x={viewWidth - 20} y={4} />
 
-          {/* RENDER ACTIVE VIEWS */}
+          {/* RENDER ACTIVE FLOOR VIEWS */}
           {activeFloorView === 'ground' && (
-            renderFloorSheet('ground', groundFloor.rooms || [], padding, padding, 'Ground Floor Plan')
+            renderFloorSheet('ground', groundFloor.rooms || [], paddingLeft, paddingTop, 'GROUND FLOOR PLAN')
           )}
 
           {activeFloorView === 'first' && (
-            renderFloorSheet('first', firstFloor.rooms || [], padding, padding, 'First Floor Plan')
+            renderFloorSheet('first', firstFloor.rooms || [], paddingLeft, paddingTop, 'FIRST FLOOR PLAN')
           )}
 
           {activeFloorView === 'combined' && (
             <>
-              {renderFloorSheet('ground', groundFloor.rooms || [], padding, padding, 'Ground Floor Plan')}
-              {renderFloorSheet('first', firstFloor.rooms || [], padding + plotW + separationGap, padding, 'First Floor Plan')}
+              {renderFloorSheet('ground', groundFloor.rooms || [], paddingLeft, paddingTop, 'GROUND FLOOR PLAN')}
+              {renderFloorSheet('first', firstFloor.rooms || [], paddingLeft + plotW + separationGap, paddingTop, 'FIRST FLOOR PLAN')}
             </>
+          )}
+
+          {/* IS 962 / NBC COMPLIANT TITLE BLOCK (BOTTOM RIGHT CORNER) */}
+          {showTitleBlock && (
+            <CadTitleBlock
+              x={viewWidth - 32}
+              y={viewHeight - 18}
+              projectTitle={projectName || `${plotW}×${plotL} Standard Residential Plan`}
+              clientName={clientName || "Shri Sharma"}
+              drawingTitle={activeFloorView === 'ground' ? "GROUND FLOOR PLAN" : activeFloorView === 'first' ? "FIRST FLOOR PLAN" : "GROUND + FIRST FLOOR"}
+              scale="1:100 / A3"
+              rev="00"
+              dwgNo="A-101"
+            />
           )}
 
         </svg>
 
         {/* FLOATING HOVER TOOLTIP */}
         {hoveredRoom && (
-          <div className="absolute top-4 left-4 bg-slate-900/90 text-white backdrop-blur-md px-3 py-1.5 rounded-xl shadow-lg text-xs font-mono border border-slate-700 pointer-events-none z-20 space-y-0.5">
-            <div className="font-bold text-sky-300">{hoveredRoom.name}</div>
+          <div className="absolute top-4 left-4 bg-slate-900/90 text-white backdrop-blur-md px-3 py-2 rounded-xl shadow-xl text-xs font-mono border border-slate-700 pointer-events-none z-20 space-y-0.5">
+            <div className="font-extrabold text-sky-300 uppercase tracking-wider">{hoveredRoom.name}</div>
             <div className="text-[11px] text-slate-300">Floor: <span className="capitalize font-bold text-white">{hoveredRoom.floor || 'Ground'}</span></div>
-            <div className="text-[11px] text-slate-300">Dimensions: {hoveredRoom.width} × {hoveredRoom.height} {plot.unit}</div>
-            <div className="text-[10px] text-slate-400">Area: {hoveredRoom.area} sq.{plot.unit}</div>
+            <div className="text-[11px] text-slate-300">Dimensions: <span className="font-bold text-emerald-300">{formatRoomDimensions(hoveredRoom.width, hoveredRoom.height, unitMode)}</span></div>
+            <div className="text-[10px] text-slate-400">Area: <span className="text-white font-bold">{formatArea(hoveredRoom.area || (hoveredRoom.width * hoveredRoom.height), unitMode)}</span></div>
           </div>
         )}
 
-        {/* ARCHITECTURAL SYMBOL LEGEND */}
-        <div className="absolute bottom-3 left-3 bg-white/90 border border-slate-200 backdrop-blur-md px-3 py-1.5 rounded-xl shadow-sm text-[10px] font-mono text-slate-700 flex items-center gap-3 z-10 pointer-events-none">
-          <span className="font-bold text-slate-900 uppercase">Legend:</span>
-          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-slate-900 inline-block rounded-xs"></span> Wall / Column</span>
-          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-sky-400 inline-block rounded-xs"></span> Window</span>
-          <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-amber-500 inline-block rounded-xs"></span> Door</span>
-          <span className="flex items-center gap-1"><span className="text-indigo-600 font-bold">↑</span> Staircase</span>
-        </div>
-
       </div>
 
-      {/* FOOTER CANVAS STATS BAR */}
+      {/* 3. FOOTER CAD STATS BAR */}
       <div className="bg-white border-t border-slate-200 px-4 py-2 flex items-center justify-between text-xs text-slate-600 font-mono shrink-0 rounded-b-xl">
-        <div>
-          Viewing: <span className="font-bold text-sky-700 capitalize">{activeFloorView === 'combined' ? 'Ground + First Dual Sheet' : `${activeFloorView} Floor`}</span>
+        <div className="flex items-center gap-3">
+          <span>Active Sheet: <strong className="text-slate-900 uppercase">{activeFloorView === 'combined' ? 'Ground + First' : `${activeFloorView} Floor`}</strong></span>
+          <span className="text-slate-300">|</span>
+          <span>Standard: <strong className="text-sky-700">IS 962:1989 / NBC 2016</strong></span>
         </div>
         <div>
-          Total Plot Area: <span className="font-bold text-slate-900">{plotW * plotL} sq.{plot.unit}</span>
+          Total Plot Area: <strong className="text-slate-900">{formatArea(plotW * plotL, unitMode)}</strong> ({formatDimension(plotW, unitMode)} × {formatDimension(plotL, unitMode)})
         </div>
       </div>
 
