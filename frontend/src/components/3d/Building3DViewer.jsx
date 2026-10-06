@@ -191,8 +191,37 @@ export default function Building3DViewer({
     const stuccoIntTex = createStuccoWallTexture('#faf8f5');
     const teakWoodTex = createTeakWoodTexture();
     const grassTex = createGrassTexture();
+    const oakWoodTex = createOakWoodTexture();
+    const ceramicTileTex = createCeramicTileTexture('#faf5ee', '#b8af9f');
+    const mosaicTileTex = createMosaicTileTexture();
 
     const materials = {
+      // Natural Room Floor Finishes (Warm Architectural Interior)
+      floorOakWood: new THREE.MeshStandardMaterial({ 
+        map: oakWoodTex, 
+        color: '#c89d7c', 
+        roughness: 0.45, 
+        clippingPlanes 
+      }),
+      floorCeramic: new THREE.MeshStandardMaterial({ 
+        map: ceramicTileTex, 
+        color: '#f8fafc', 
+        roughness: 0.3, 
+        clippingPlanes 
+      }),
+      floorMosaic: new THREE.MeshStandardMaterial({ 
+        map: mosaicTileTex, 
+        color: '#94a3b8', 
+        roughness: 0.55, 
+        clippingPlanes 
+      }),
+      floorBalcony: new THREE.MeshStandardMaterial({ 
+        map: concreteTex, 
+        color: '#cbd5e1', 
+        roughness: 0.65, 
+        clippingPlanes 
+      }),
+
       // Exterior Wall with warm modern plaster
       wallExt: new THREE.MeshStandardMaterial({ 
         map: stuccoExtTex, 
@@ -220,7 +249,7 @@ export default function Building3DViewer({
 
       // Concrete Plinth & Foundation Beam
       plinthBeam: new THREE.MeshStandardMaterial({
-        color: '#475569',
+        color: '#64748b',
         roughness: 0.7,
         clippingPlanes
       }),
@@ -265,8 +294,8 @@ export default function Building3DViewer({
       }),
       railingPost: new THREE.MeshStandardMaterial({ color: '#0f172a', metalness: 0.8, roughness: 0.2 }),
 
-      // Stairs
-      stairTread: new THREE.MeshStandardMaterial({ color: '#d97706', roughness: 0.4, clippingPlanes }),
+      // Stairs - Clean Architectural Stone/Concrete with dark handrail (Picture 1 style)
+      stairTread: new THREE.MeshStandardMaterial({ color: '#cbd5e1', roughness: 0.45, clippingPlanes }),
       stairWaist: new THREE.MeshStandardMaterial({ map: concreteTex, color: '#94a3b8', roughness: 0.7, clippingPlanes }),
       stairRailing: new THREE.MeshStandardMaterial({ color: '#0f172a', metalness: 0.8, roughness: 0.2, clippingPlanes }),
 
@@ -1137,11 +1166,11 @@ function buildBimSlabMesh(slab, materials, isTech) {
     return group;
   }
 
-  // Ground plinth base band (1.5 ft foundation plinth)
+  // Ground plinth foundation base beam (placed below slab so it never obscures floor finishes)
   if (slab.elevation < 0.1) {
-    const plinthGeo = new THREE.BoxGeometry(w + 0.4, 1.2, l + 0.4);
+    const plinthGeo = new THREE.BoxGeometry(w + 0.3, 0.5, l + 0.3);
     const plinthMesh = new THREE.Mesh(plinthGeo, materials.plinthBeam);
-    plinthMesh.position.set(slab.x + w / 2, 0.6, slab.y + l / 2);
+    plinthMesh.position.set(slab.x + w / 2, -0.25, slab.y + l / 2);
     plinthMesh.receiveShadow = true;
     group.add(plinthMesh);
   }
@@ -1213,17 +1242,17 @@ function buildRoomFloorMesh(room, elevation, materials) {
   const rh = room.height - 0.08;
   const geo = new THREE.BoxGeometry(rw, 0.08, rh);
 
-  let mat = materials.slabConcrete;
-  if (['Bedroom', 'Master Bedroom'].includes(room.type)) {
-    mat = new THREE.MeshStandardMaterial({ color: '#c49a6c', roughness: 0.45 }); // Oak Hardwood
+  let mat = materials.floorCeramic || materials.slabConcrete;
+  if (['Bedroom', 'Master Bedroom', 'Kids Bedroom', 'Guest Bedroom'].includes(room.type)) {
+    mat = materials.floorOakWood; // Warm Oak Parquet from Picture 1
   } else if (room.type === 'Kitchen') {
-    mat = new THREE.MeshStandardMaterial({ color: '#fef08a', roughness: 0.3 }); // Polished Ceramic Tile
-  } else if (['Bathroom', 'Washroom'].includes(room.type)) {
-    mat = new THREE.MeshStandardMaterial({ color: '#94a3b8', roughness: 0.6 }); // Anti-skid Mosaic
-  } else if (room.type === 'Living Room' || room.type === 'Hall') {
-    mat = new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.3 }); // Italian White Marble
-  } else if (room.type === 'Balcony') {
-    mat = new THREE.MeshStandardMaterial({ color: '#cbd5e1', roughness: 0.7 }); // Paver Tiles
+    mat = materials.floorCeramic; // Polished Ceramic Tile
+  } else if (['Bathroom', 'Washroom', 'Toilet', 'Powder Room'].includes(room.type)) {
+    mat = materials.floorMosaic; // Non-slip mosaic
+  } else if (room.type === 'Living Room' || room.type === 'Hall' || room.type === 'Drawing Room' || room.type === 'Dining Room') {
+    mat = materials.floorCeramic; // Italian white marble
+  } else if (room.type === 'Balcony' || room.type === 'Verandah' || room.type === 'Porch') {
+    mat = materials.floorBalcony; // Paver tile
   }
 
   const mesh = new THREE.Mesh(geo, mat);

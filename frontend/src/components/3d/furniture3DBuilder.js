@@ -11,7 +11,7 @@ export function buildRoomFurniture(room, yElevation, materials) {
   const ry = room.y;
   const rw = room.width;
   const rh = room.height;
-  const base = yElevation + 0.45;
+  const base = yElevation + 0.56;
 
   const type = room.type;
 
