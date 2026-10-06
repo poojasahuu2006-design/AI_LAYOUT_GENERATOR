@@ -3,8 +3,9 @@
  * Topology-first (adjacency graph) then multi-pattern constraint geometry.
  */
 
-import { buildAdjacencyGraph } from './spaceTopology';
-import { solveGeometryFromGraph, round1 } from './geometrySolver';
+import { buildAdjacencyGraph } from './spaceTopology.js';
+import { solveGeometryFromGraph, round1 } from './geometrySolver.js';
+import { buildBimModel } from './bimModelEngine.js';
 
 export { round1 };
 
@@ -24,7 +25,8 @@ export const ROOM_SPEC_DEFAULTS = {
   'Study Room': { minWidth: 7, minHeight: 7, minArea: 60, color: '#eef2ff', icon: 'BookOpen' },
   'Pooja Room': { minWidth: 4, minHeight: 4, minArea: 20, color: '#fefce8', icon: 'Flame' },
   'Hallway': { minWidth: 3.5, minHeight: 6, minArea: 25, color: '#f1f5f9', icon: 'DoorOpen' },
-  'Foyer': { minWidth: 5, minHeight: 6, minArea: 40, color: '#f8fafc', icon: 'DoorOpen' }
+  'Foyer': { minWidth: 5, minHeight: 6, minArea: 40, color: '#f8fafc', icon: 'DoorOpen' },
+  'Parking': { minWidth: 10, minHeight: 14, minArea: 140, color: '#f1f5f9', icon: 'Car' }
 };
 
 /**
@@ -116,12 +118,17 @@ export function generateFloorLayoutLocally({ plot, selectedFloors, floorRequirem
   const totalCarpet = round1(totalCarpetAreaAllFloors);
   const wallDeductionArea = round1(totalPlinth - totalCarpet);
 
-  return {
+  const layoutOutput = {
     plot: {
       length: L,
       width: W,
       unit: unit,
       totalArea: totalPlotArea,
+      floorHeight: plot?.floorHeight || (unit === 'm' ? 3.0 : 10.0),
+      exteriorWallThickness: extWallThick,
+      interiorWallThickness: intWallThick,
+      roofType: plot?.roofType || 'flat',
+      frontDirection: plot?.frontDirection || 'North',
       supportedFloorsText: "Supported Floors: Ground Floor + First Floor"
     },
     selectedFloors: targetFloors,
@@ -142,6 +149,20 @@ export function generateFloorLayoutLocally({ plot, selectedFloors, floorRequirem
     requirementStats: requirementStats,
     warnings: []
   };
+
+  try {
+    layoutOutput.buildingModel = buildBimModel(layoutOutput, {
+      unit,
+      floorHeight: layoutOutput.plot.floorHeight,
+      exteriorWallThickness: extWallThick,
+      interiorWallThickness: intWallThick,
+      roofType: layoutOutput.plot.roofType
+    });
+  } catch (err) {
+    console.warn('[BIM Generation Warning]:', err);
+  }
+
+  return layoutOutput;
 }
 
 /**

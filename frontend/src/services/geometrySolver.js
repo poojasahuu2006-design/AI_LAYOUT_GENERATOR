@@ -11,7 +11,7 @@ import {
   isLowFixed,
   isFiller,
   maxAreaForType
-} from './areaAllocator';
+} from './areaAllocator.js';
 
 export const round1 = (val) => Math.round(Number(val) * 10) / 10;
 
@@ -103,6 +103,19 @@ export function solveGeometryFromGraph(graph, W, L, floorLevel, alignStaircase =
   // Generate candidate layouts using architectural zoning patterns
   const candidates = [];
 
+  // Pattern Core: Dedicated Architectural Staircase Core (Top Priority when Staircase requested)
+  if (staircases.length > 0) {
+    try {
+      const candCore = generateStairCoreLayout(
+        roomList, living, diningRooms, kitchens, poojas, staircases, bedrooms, bathrooms, balconies, utilities,
+        W, L, floorLevel, alignStaircase
+      );
+      if (candCore && candCore.length === roomList.length) candidates.push(candCore);
+    } catch (e) {
+      // continue
+    }
+  }
+
   // Pattern A: Front-to-Back Zonal Split
   try {
     const candA = generateFrontToBackLayout(
@@ -136,7 +149,7 @@ export function solveGeometryFromGraph(graph, W, L, floorLevel, alignStaircase =
   let bestScore = -Infinity;
 
   candidates.forEach((cand) => {
-    const score = scoreCandidateLayout(cand, roomList, W, L, floorLevel);
+    const score = scoreCandidateLayout(cand, roomList, W, L, floorLevel, alignStaircase);
     if (score > bestScore) {
       bestScore = score;
       bestPlaced = cand;
@@ -242,13 +255,129 @@ function generateFrontToBackLayout(
 }
 
 /**
+ * Pattern: Dedicated Architectural Staircase Core Layout
+ * Places staircase with realistic residential proportions (6.5–7.5 ft width, 10–12 ft depth)
+ * in the side circulation zone, strictly locked between Ground and Upper floors.
+ */
+function generateStairCoreLayout(
+  roomList, living, diningRooms, kitchens, poojas, staircases, bedrooms, bathrooms, balconies, utilities,
+  W, L, floorLevel, alignStaircase
+) {
+  if (!staircases || staircases.length === 0) {
+    throw new Error('Pattern not applicable: no staircase requested');
+  }
+
+  const placed = [];
+  const stair = staircases[0];
+
+  // 1. Determine Staircase Dimensions and Position
+  let stairX, stairY, stairW, stairH;
+
+  if (alignStaircase) {
+    // Exact lock from ground floor for vertical structural alignment
+    stairX = round1(alignStaircase.x);
+    stairY = round1(alignStaircase.y);
+    stairW = round1(alignStaircase.width);
+    stairH = round1(alignStaircase.height);
+  } else {
+    // Ground floor architectural placement (Dog-legged staircase core)
+    stairW = round1(Math.max(6.5, Math.min(7.5, W * 0.24))); // e.g. 7.0 ft
+    stairH = round1(Math.max(10.0, Math.min(12.0, L * 0.28))); // e.g. 10.5–11.0 ft
+    stairX = 0; // West / side exterior wall
+    
+    // Front zone height (living / front suite)
+    const frontTargetArea = (living ? living.targetArea || 240 : 180);
+    const estFrontH = round1(Math.min(L * 0.38, Math.max(L * 0.26, frontTargetArea / W)));
+    stairY = estFrontH;
+  }
+
+  const frontH = stairY;
+  const midH = stairH;
+  const rearH = round1(L - frontH - midH);
+
+  if (frontH < 8 || rearH < 8) {
+    throw new Error('Pattern not applicable: plot length too tight for 3-zone stair core');
+  }
+
+  // Create the pinned staircase room
+  const stairRoomRect = createRoomRect(stair, stairX, stairY, stairW, stairH, floorLevel);
+  stairRoomRect._pinned = true;
+  placed.push(stairRoomRect);
+
+  const placedIds = new Set([stair.id]);
+
+  // 2. Zone 1: Front Zone (0 to frontH, width W)
+  const frontRooms = [];
+  if (living) {
+    frontRooms.push(living);
+    placedIds.add(living.id);
+  } else {
+    // Upper floor: Master bedroom + Balcony
+    const master = bedrooms.find(b => b.type === 'Master Bedroom') || bedrooms[0];
+    if (master) {
+      frontRooms.push(master);
+      placedIds.add(master.id);
+    }
+    if (balconies.length > 0) {
+      frontRooms.push(balconies[0]);
+      placedIds.add(balconies[0].id);
+    }
+  }
+
+  if (frontRooms.length > 0) {
+    if (frontRooms.length === 1) {
+      placed.push(createRoomRect(frontRooms[0], 0, 0, W, frontH, floorLevel));
+    } else {
+      placed.push(...sliceBandHorizontally(frontRooms, 0, 0, W, frontH, floorLevel));
+    }
+  }
+
+  // 3. Zone 2: Mid Zone adjacent to Staircase (stairW to W, height midH)
+  const remainingMidW = round1(W - stairW);
+  const midRooms = roomList.filter(r => 
+    !placedIds.has(r.id) && 
+    (r.type === 'Dining Room' || r.type === 'Kitchen' || r.type === 'Pooja Room' || 
+     ['Study Room', 'Family Lounge', 'Hall'].includes(r.type))
+  );
+
+  // If no dining/kitchen mid rooms (e.g. upper floor), assign a bedroom or lounge
+  if (midRooms.length === 0) {
+    const unplacedBed = bedrooms.find(b => !placedIds.has(b.id));
+    if (unplacedBed) {
+      midRooms.push(unplacedBed);
+      placedIds.add(unplacedBed.id);
+    }
+  } else {
+    midRooms.forEach(r => placedIds.add(r.id));
+  }
+
+  if (midRooms.length > 0) {
+    placed.push(...sliceBandHorizontally(midRooms, stairW, stairY, remainingMidW, midH, floorLevel));
+  } else {
+    const unplaced = roomList.find(r => !placedIds.has(r.id));
+    if (unplaced) {
+      placed.push(createRoomRect(unplaced, stairW, stairY, remainingMidW, midH, floorLevel));
+      placedIds.add(unplaced.id);
+    }
+  }
+
+  // 4. Zone 3: Rear Zone (stairY + midH to L, width W, height rearH)
+  const rearRooms = roomList.filter(r => !placedIds.has(r.id));
+  if (rearRooms.length > 0) {
+    placed.push(...partitionSpace(rearRooms, 0, round1(stairY + midH), W, rearH, floorLevel));
+  }
+
+  return placed;
+}
+
+/**
  * Pattern B: 3-Zone Split (Front Living -> Mid Kitchen/Dining/Stair -> Rear Bedrooms)
  */
 function generateThreeZoneLayout(
   roomList, living, diningRooms, kitchens, poojas, staircases, bedrooms, bathrooms, balconies, utilities,
   W, L, floorLevel, alignStaircase
 ) {
-  if (!living || bedrooms.length === 0 || L < 36) {
+  if (bedrooms.length === 0 || L < 32) {
     throw new Error('Pattern B not applicable');
   }
 
@@ -260,14 +389,24 @@ function generateThreeZoneLayout(
     throw new Error('Pattern B needs mid rooms');
   }
 
-  const livingH = round1(Math.min(L * 0.38, Math.max(L * 0.26, (living.targetArea || 250) / W)));
+  const livingH = living 
+    ? round1(Math.min(L * 0.38, Math.max(L * 0.26, (living.targetArea || 250) / W)))
+    : round1(Math.min(L * 0.35, 14.0));
   const midTargetSum = midRooms.reduce((s, r) => s + (r.targetArea || 80), 0);
-  const midH = round1(Math.min(L * 0.34, Math.max(L * 0.18, midTargetSum / W)));
+  const midH = round1(Math.min(L * 0.34, Math.max(L * 0.22, midTargetSum / W)));
   const rearH = round1(L - livingH - midH);
 
-  if (rearH < 10) throw new Error('Pattern B rear band too small');
+  if (rearH < 9) throw new Error('Pattern B rear band too small');
 
-  placed.push(createRoomRect(living, 0, 0, W, livingH, floorLevel));
+  if (living) {
+    placed.push(createRoomRect(living, 0, 0, W, livingH, floorLevel));
+  } else {
+    const master = bedrooms.find((b) => b.type === 'Master Bedroom') || bedrooms[0];
+    const frontRooms = [master];
+    if (balconies.length > 0) frontRooms.push(balconies[0]);
+    placed.push(...sliceBandHorizontally(frontRooms, 0, 0, W, livingH, floorLevel));
+  }
+
   placed.push(...sliceBandHorizontally(midRooms, 0, livingH, W, midH, floorLevel));
   placed.push(...partitionSpace(rearHabitable, 0, round1(livingH + midH), W, rearH, floorLevel));
 
@@ -280,6 +419,25 @@ function generateThreeZoneLayout(
 export function partitionSpace(rooms, rx, ry, rw, rh, floorLevel) {
   if (!rooms || rooms.length === 0) return [];
   if (rooms.length === 1) return [createRoomRect(rooms[0], rx, ry, rw, rh, floorLevel)];
+
+  // Separate staircase from standard service ribbons so stairs are never squashed into a 5.5ft strip
+  const stairs = rooms.filter((r) => r.type === 'Staircase');
+  if (stairs.length > 0) {
+    const sRoom = stairs[0];
+    const stairW = round1(Math.min(rw * 0.4, Math.max(6.5, 7.0)));
+    const stairH = round1(Math.min(rh, Math.max(10.0, 11.0)));
+    const otherRooms = rooms.filter((r) => r.id !== sRoom.id);
+    
+    const placedStair = createRoomRect(sRoom, rx, ry, stairW, stairH, floorLevel);
+    placedStair._pinned = true;
+
+    if (otherRooms.length === 0) return [placedStair];
+    
+    // Remaining space alongside stair
+    const remainW = round1(rw - stairW);
+    const sidePlaced = partitionSpace(otherRooms, round1(rx + stairW), ry, remainW, rh, floorLevel);
+    return [placedStair, ...sidePlaced];
+  }
 
   const habitable = rooms.filter((r) => !isLowFixed(r.type) && !isFiller(r.type));
   const service = rooms.filter((r) => isLowFixed(r.type) || isFiller(r.type));
@@ -306,7 +464,7 @@ export function partitionSpace(rooms, rx, ry, rw, rh, floorLevel) {
     const sTarget = sRoom.targetArea || 38;
     const maxCap = sRoom.type === 'Bathroom' ? 58 : (sRoom.type === 'Washroom' ? 40 : 120);
     const maxAllowedW = maxCap / rh;
-    const maxW = sRoom.type === 'Staircase' ? Math.min(rw * 0.45, 9.5) : Math.min(rw * 0.35, Math.min(6.5, maxAllowedW));
+    const maxW = Math.min(rw * 0.35, Math.min(6.5, maxAllowedW));
     const sw = round1(Math.max(3.5, Math.min(maxW, sTarget / rh)));
     const habW = round1(rw - sw);
 
@@ -330,8 +488,6 @@ export function partitionSpace(rooms, rx, ry, rw, rh, floorLevel) {
       sw = round1(Math.max(4.5, Math.min(6.5, (sRoom.targetArea || 40) / serviceH)));
     } else if (sRoom.type === 'Pooja Room') {
       sw = round1(Math.max(4.0, Math.min(6.0, (sRoom.targetArea || 30) / serviceH)));
-    } else if (sRoom.type === 'Staircase') {
-      sw = round1(Math.max(7.0, Math.min(14.0, (sRoom.targetArea || 80) / serviceH)));
     } else {
       sw = round1(Math.max(4.5, (sRoom.targetArea || 40) / serviceH));
     }
@@ -341,8 +497,8 @@ export function partitionSpace(rooms, rx, ry, rw, rh, floorLevel) {
   const totalFixedServiceW = round1(serviceRects.reduce((s, r) => s + r.width, 0));
   const remainingRowW = round1(rw - totalFixedServiceW);
 
-  // If there are multiple service rooms (e.g. Balcony + Staircase + Bath)
-  const flexService = serviceRects.filter((s) => ['Balcony', 'Staircase', 'Utility Room', 'Store Room'].includes(s.room.type));
+  // Notice: Staircase is explicitly excluded from flexService
+  const flexService = serviceRects.filter((s) => ['Balcony', 'Utility Room', 'Store Room'].includes(s.room.type));
 
   if (flexService.length > 0 && totalFixedServiceW >= rw * 0.45) {
     const placed = [];
@@ -499,12 +655,45 @@ export function generateGuillotineLayout(rooms, W, L, floorLevel) {
   return partition(sorted, 0, 0, W, L);
 }
 
-function scoreCandidateLayout(candRooms, requestedRooms, W, L, floorLevel) {
+function scoreCandidateLayout(candRooms, requestedRooms, W, L, floorLevel, alignStaircase = null) {
   let score = 500;
 
   const living = candRooms.find((r) => r.type === 'Living Room' || r.type === 'Hall' || r.type === 'Foyer');
   const bedrooms = candRooms.filter((r) => BED_TYPES.includes(r.type));
   const bathrooms = candRooms.filter((r) => BATH_TYPES.includes(r.type));
+  const candStairs = candRooms.filter((r) => r.type === 'Staircase');
+
+  // Multi-floor staircase vertical alignment check
+  if (alignStaircase && candStairs.length > 0) {
+    const st = candStairs[0];
+    const xDiff = Math.abs(st.x - alignStaircase.x);
+    const yDiff = Math.abs(st.y - alignStaircase.y);
+    const wDiff = Math.abs(st.width - alignStaircase.width);
+    const hDiff = Math.abs(st.height - alignStaircase.height);
+    if (xDiff < 0.2 && yDiff < 0.2 && wDiff < 0.2 && hDiff < 0.2) {
+      score += 3000; // Perfect vertical alignment!
+    } else {
+      score -= 1500;
+    }
+  }
+
+  // Architectural staircase proportion and placement scoring
+  candStairs.forEach((st) => {
+    const stRatio = st.height / st.width;
+    if (stRatio >= 1.2 && stRatio <= 2.0) {
+      score += 300; // Standard dog-legged staircase proportions (e.g. 7' x 11')
+    } else if (st.width / st.height > 2.0) {
+      score -= 800; // Severely penalize elongated flat ribbons (e.g. 23.5' x 5.5')
+    }
+    // Reward placing stair along exterior side wall (light, ventilation, structural wall)
+    if (st.x <= EPS || st.x + st.width >= W - EPS) {
+      score += 150;
+    }
+    // Discourage placing stair directly on the front street facade
+    if (st.y <= EPS) {
+      score -= 250;
+    }
+  });
 
   if (floorLevel === 'ground' && living) {
     if (living.y <= EPS) score += 200;
@@ -524,9 +713,11 @@ function scoreCandidateLayout(candRooms, requestedRooms, W, L, floorLevel) {
   });
 
   candRooms.forEach((r) => {
-    const ratio = Math.max(r.width / r.height, r.height / r.width);
-    if (ratio > 2.2) score -= 80 * (ratio - 2.2);
-    else score += 30;
+    if (r.type !== 'Staircase') {
+      const ratio = Math.max(r.width / r.height, r.height / r.width);
+      if (ratio > 2.2) score -= 80 * (ratio - 2.2);
+      else score += 30;
+    }
   });
 
   if (living && bedrooms.length > 0) {
@@ -540,6 +731,10 @@ function scoreCandidateLayout(candRooms, requestedRooms, W, L, floorLevel) {
 
 function calibrateTiling(placedRooms, W, L, floorLevel) {
   placedRooms.forEach((r) => {
+    if (r._pinned) {
+      r.area = round1(r.width * r.height);
+      return;
+    }
     r.x = round1(Math.max(0, Math.min(W - 2, r.x)));
     r.y = round1(Math.max(0, Math.min(L - 2, r.y)));
     r.width = round1(Math.min(W - r.x, Math.max(2, r.width)));

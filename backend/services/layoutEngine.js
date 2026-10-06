@@ -23,7 +23,8 @@ const ROOM_SPEC_DEFAULTS = {
   'Study Room': { minWidth: 7, minHeight: 7, minArea: 60, color: '#eef2ff', icon: 'BookOpen' },
   'Pooja Room': { minWidth: 4, minHeight: 4, minArea: 20, color: '#fefce8', icon: 'Flame' },
   'Hallway': { minWidth: 3.5, minHeight: 6, minArea: 25, color: '#f1f5f9', icon: 'DoorOpen' },
-  'Foyer': { minWidth: 5, minHeight: 6, minArea: 40, color: '#f8fafc', icon: 'DoorOpen' }
+  'Foyer': { minWidth: 5, minHeight: 6, minArea: 40, color: '#f8fafc', icon: 'DoorOpen' },
+  'Parking': { minWidth: 10, minHeight: 14, minArea: 140, color: '#f1f5f9', icon: 'Car' }
 };
 
 /**
@@ -125,6 +126,11 @@ function generateLayout({ plot, selectedFloors, floorRequirements, rooms }) {
       width: W,
       unit: unit,
       totalArea: totalPlotArea,
+      floorHeight: plot?.floorHeight || (unit === 'm' ? 3.0 : 10.0),
+      exteriorWallThickness: extWallThick,
+      interiorWallThickness: intWallThick,
+      roofType: plot?.roofType || 'flat',
+      frontDirection: plot?.frontDirection || 'North',
       supportedFloorsText: "Supported Floors: Ground Floor + First Floor"
     },
     selectedFloors: targetFloors,

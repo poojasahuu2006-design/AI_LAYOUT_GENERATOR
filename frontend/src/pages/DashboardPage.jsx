@@ -109,6 +109,24 @@ export default function DashboardPage({
     }
   }, [selectedRoomId]);
 
+  // Parametric BIM Settings State
+  const [bimSettings, setBimSettings] = useState({
+    floorHeight: currentProject?.floorHeight || layout.plot?.floorHeight || (plot.unit === 'm' ? 3.0 : 10.0),
+    exteriorWallThickness: layout.plot?.exteriorWallThickness || (plot.unit === 'm' ? 0.23 : 0.75),
+    interiorWallThickness: layout.plot?.interiorWallThickness || (plot.unit === 'm' ? 0.115 : 0.375),
+    roofType: currentProject?.roofType || layout.plot?.roofType || 'flat'
+  });
+
+  useEffect(() => {
+    if (layout.plot) {
+      setBimSettings(prev => ({
+        ...prev,
+        floorHeight: currentProject?.floorHeight || layout.plot.floorHeight || prev.floorHeight,
+        roofType: currentProject?.roofType || layout.plot.roofType || prev.roofType
+      }));
+    }
+  }, [layout.plot?.floorHeight, layout.plot?.roofType]);
+
   // Room Property Edit Apply
   const handleApplyRoomEdit = () => {
     if (!selectedRoom) return;
@@ -489,7 +507,10 @@ export default function DashboardPage({
               ) : (
                 <Building3DViewer
                   layout={layout}
+                  bimSettings={bimSettings}
+                  onUpdateBimSettings={setBimSettings}
                   onSwitchTo2D={() => setViewMode('2d')}
+                  onSelectRoom={(roomId) => setSelectedRoomId(roomId)}
                 />
               )}
 
@@ -656,6 +677,88 @@ export default function DashboardPage({
                 Click any room on the 2D plan to view & edit specs.
               </div>
             )}
+
+            {/* PARAMETRIC BIM SETTINGS PANEL */}
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs font-extrabold text-slate-900 uppercase tracking-wider">
+                  <Sliders className="w-4 h-4 text-sky-600" />
+                  <span>Parametric BIM Settings</span>
+                </div>
+                <span className="px-2 py-0.5 rounded-md bg-sky-100 text-sky-700 text-[10px] font-bold">Revit Linked</span>
+              </div>
+
+              <div className="space-y-2.5 text-xs">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Floor-to-Floor Height ({plot.unit})
+                  </label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min={plot.unit === 'm' ? '2.4' : '8'}
+                    max={plot.unit === 'm' ? '5.0' : '16'}
+                    value={bimSettings.floorHeight}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setBimSettings(prev => ({ ...prev, floorHeight: val }));
+                      setCurrentProject(prev => ({
+                        ...prev,
+                        floorHeight: val,
+                        layout: { ...prev.layout, plot: { ...prev.layout.plot, floorHeight: val } }
+                      }));
+                    }}
+                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-mono text-slate-900 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Roof Architecture
+                  </label>
+                  <select
+                    value={bimSettings.roofType}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setBimSettings(prev => ({ ...prev, roofType: val }));
+                      setCurrentProject(prev => ({
+                        ...prev,
+                        roofType: val,
+                        layout: { ...prev.layout, plot: { ...prev.layout.plot, roofType: val } }
+                      }));
+                    }}
+                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-900 outline-none"
+                  >
+                    <option value="flat">Flat Roof + 3ft Parapet</option>
+                    <option value="sloped_hip">Sloped Hip Roof (4-Pitch)</option>
+                    <option value="sloped_gable">Sloped Gable Roof (Pitched)</option>
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] text-slate-500 mb-0.5">Ext. Wall ({plot.unit})</label>
+                    <input
+                      type="number"
+                      step="0.05"
+                      value={bimSettings.exteriorWallThickness}
+                      onChange={(e) => setBimSettings(prev => ({ ...prev, exteriorWallThickness: Number(e.target.value) }))}
+                      className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-[11px] font-mono text-slate-900 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-slate-500 mb-0.5">Int. Wall ({plot.unit})</label>
+                    <input
+                      type="number"
+                      step="0.05"
+                      value={bimSettings.interiorWallThickness}
+                      onChange={(e) => setBimSettings(prev => ({ ...prev, interiorWallThickness: Number(e.target.value) }))}
+                      className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-[11px] font-mono text-slate-900 outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
 
             {/* PROJECT SUMMARY PANEL */}
             <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2">

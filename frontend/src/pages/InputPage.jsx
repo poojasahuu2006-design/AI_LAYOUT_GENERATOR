@@ -19,7 +19,8 @@ const ROOM_CATALOG = [
   { type: 'Store Room', label: 'Store Room' },
   { type: 'Staircase', label: 'Staircase' },
   { type: 'Study Room', label: 'Study Room' },
-  { type: 'Pooja Room', label: 'Pooja Room' }
+  { type: 'Pooja Room', label: 'Pooja Room' },
+  { type: 'Parking', label: 'Parking / Car Porch' }
 ];
 
 export default function InputPage({ onGenerateSuccess }) {
@@ -32,6 +33,8 @@ export default function InputPage({ onGenerateSuccess }) {
   const [unit, setUnit] = useState('ft');
   const [frontDirection, setFrontDirection] = useState('North');
   const [roadSide, setRoadSide] = useState('Front');
+  const [floorHeight, setFloorHeight] = useState(10);
+  const [roofType, setRoofType] = useState('flat'); // 'flat' | 'sloped_hip' | 'sloped_gable'
 
   // Step 2: Floor Selection ('ground' | 'first' | 'both')
   const [floorMode, setFloorMode] = useState('both'); // 'ground', 'first', 'both'
@@ -255,7 +258,15 @@ export default function InputPage({ onGenerateSuccess }) {
           .map(k => ({ type: k, quantity: activeFirstCounts[k] }));
       }
 
-      const plotSpec = { length: activeLength, width: activeWidth, unit };
+      const plotSpec = { 
+        length: activeLength, 
+        width: activeWidth, 
+        unit,
+        floorHeight: Number(floorHeight) || (unit === 'm' ? 3.0 : 10.0),
+        roofType,
+        frontDirection,
+        roadSide
+      };
       
       const generated = await generateLayout({
         plot: plotSpec,
@@ -274,6 +285,8 @@ export default function InputPage({ onGenerateSuccess }) {
         unit,
         frontDirection,
         roadSide,
+        floorHeight: Number(floorHeight) || (unit === 'm' ? 3.0 : 10.0),
+        roofType,
         selectedFloors: targetFloors,
         layout: generated
       });
@@ -416,6 +429,52 @@ export default function InputPage({ onGenerateSuccess }) {
                       Meter (m)
                     </button>
                   </div>
+                </div>
+              </div>
+
+              {/* ARCHITECTURAL & BIM PARAMETERS */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-6 pt-4 border-t border-slate-100">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-2">Entrance Direction</label>
+                  <select
+                    value={frontDirection}
+                    onChange={(e) => setFrontDirection(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-900 text-sm font-semibold focus:border-sky-500 focus:bg-white outline-none"
+                  >
+                    <option value="North">North (Vastu Favorable)</option>
+                    <option value="East">East (Sunlight Oriented)</option>
+                    <option value="South">South</option>
+                    <option value="West">West</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-2">
+                    Floor-to-Floor Height ({unit})
+                  </label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min={unit === 'm' ? '2.4' : '8'}
+                    max={unit === 'm' ? '5.0' : '16'}
+                    value={floorHeight}
+                    onChange={(e) => setFloorHeight(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-900 text-sm font-mono focus:border-sky-500 focus:bg-white outline-none"
+                  />
+                  <span className="text-[10px] text-slate-400 mt-1 block">NBC 2016 clearance: min 9.5 ft</span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-2">Roof Design Type</label>
+                  <select
+                    value={roofType}
+                    onChange={(e) => setRoofType(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-slate-900 text-sm font-semibold focus:border-sky-500 focus:bg-white outline-none"
+                  >
+                    <option value="flat">Flat Roof + 3ft Parapet</option>
+                    <option value="sloped_hip">Sloped Hip Roof (4-Pitch)</option>
+                    <option value="sloped_gable">Sloped Gable Roof (Pitched)</option>
+                  </select>
                 </div>
               </div>
 

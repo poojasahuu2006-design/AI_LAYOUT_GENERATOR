@@ -9,12 +9,105 @@ import React from 'react';
  * 1. CAD Staircase with Violet/Purple Styling, Tread Lines, and UP Arrow
  */
 export function CadStaircase({ x, y, width, height }) {
+  const isDogLegged = width >= 5.5;
+
+  if (isDogLegged) {
+    const landingH = Math.max(2.8, Math.min(3.5, height * 0.32));
+    const flightW = (width - 0.4) / 2;
+    const runH = height - landingH;
+    const flightTreads = 8;
+    const treadH = runH / flightTreads;
+
+    return (
+      <g className="select-none pointer-events-none">
+        {/* Background soft fill */}
+        <rect
+          x={x + 0.15}
+          y={y + 0.15}
+          width={width - 0.3}
+          height={height - 0.3}
+          fill="#f8fafc"
+          stroke="#94a3b8"
+          strokeWidth="0.25"
+          rx="0.2"
+        />
+
+        {/* Flight 1 Treads (Left Flight - UP) */}
+        {Array.from({ length: flightTreads }).map((_, i) => (
+          <line
+            key={`f1-${i}`}
+            x1={x + 0.2}
+            y1={y + i * treadH}
+            x2={x + flightW}
+            y2={y + i * treadH}
+            stroke="#64748b"
+            strokeWidth="0.18"
+          />
+        ))}
+
+        {/* Flight 2 Treads (Right Flight) */}
+        {Array.from({ length: flightTreads }).map((_, i) => (
+          <line
+            key={`f2-${i}`}
+            x1={x + width - flightW}
+            y1={y + i * treadH}
+            x2={x + width - 0.2}
+            y2={y + i * treadH}
+            stroke="#64748b"
+            strokeWidth="0.18"
+          />
+        ))}
+
+        {/* Mid-Landing Platform Box */}
+        <rect
+          x={x + 0.2}
+          y={y + runH}
+          width={width - 0.4}
+          height={landingH - 0.2}
+          fill="#e2e8f0"
+          stroke="#64748b"
+          strokeWidth="0.22"
+        />
+        <text
+          x={x + width / 2}
+          y={y + runH + landingH / 2 + 0.2}
+          fill="#475569"
+          fontSize="0.75"
+          fontWeight="bold"
+          textAnchor="middle"
+        >
+          LANDING
+        </text>
+
+        {/* Central Well Gap / Railing */}
+        <line
+          x1={x + width / 2}
+          y1={y + 0.2}
+          x2={x + width / 2}
+          y2={y + runH}
+          stroke="#0f172a"
+          strokeWidth="0.35"
+        />
+
+        {/* Directional UP Arrow on Flight 1 */}
+        <g transform={`translate(${x + flightW / 2}, ${y + runH * 0.5})`}>
+          <line x1="0" y1={runH * 0.3} x2="0" y2={-runH * 0.3} stroke="#3b82f6" strokeWidth="0.25" />
+          <polygon points={`0,${-runH * 0.32} -0.4,${-runH * 0.2} 0.4,${-runH * 0.2}`} fill="#3b82f6" />
+          <rect x="-0.9" y="-0.5" width="1.8" height="1.0" fill="#3b82f6" rx="0.2" />
+          <text x="0" y="0.25" fill="#ffffff" fontSize="0.65" fontWeight="900" textAnchor="middle">
+            UP
+          </text>
+        </g>
+      </g>
+    );
+  }
+
+  // Straight flight fallback
   const treads = Math.max(7, Math.min(14, Math.floor(height * 1.5)));
   const treadHeight = height / treads;
 
   return (
     <g className="select-none pointer-events-none">
-      {/* Background soft fill */}
       <rect
         x={x + 0.15}
         y={y + 0.15}
@@ -25,61 +118,22 @@ export function CadStaircase({ x, y, width, height }) {
         strokeWidth="0.3"
         rx="0.2"
       />
-
-      {/* Stair Treads */}
       {Array.from({ length: treads }).map((_, i) => (
         <line
           key={i}
           x1={x + 0.2}
-          y1={y + (i * treadHeight)}
+          y1={y + i * treadHeight}
           x2={x + width - 0.2}
-          y2={y + (i * treadHeight)}
+          y2={y + i * treadHeight}
           stroke="#4f46e5"
           strokeWidth="0.18"
         />
       ))}
-
-      {/* Central Flight Line */}
-      <line
-        x1={x + width / 2}
-        y1={y + 0.4}
-        x2={x + width / 2}
-        y2={y + height - 0.4}
-        stroke="#4338ca"
-        strokeWidth="0.22"
-      />
-
-      {/* Directional UP Arrow */}
       <g transform={`translate(${x + width / 2}, ${y + height * 0.5})`}>
-        <line
-          x1="0"
-          y1={height * 0.35}
-          x2="0"
-          y2={-height * 0.3}
-          stroke="#4338ca"
-          strokeWidth="0.28"
-        />
-        <polygon
-          points={`0,${-height * 0.35} -0.7,${-height * 0.22} 0.7,${-height * 0.22}`}
-          fill="#4338ca"
-        />
-        <rect
-          x="-1.5"
-          y="-0.7"
-          width="3.0"
-          height="1.4"
-          fill="#4338ca"
-          rx="0.3"
-        />
-        <text
-          x="0"
-          y="0.3"
-          fill="#ffffff"
-          fontSize="0.8"
-          fontWeight="900"
-          textAnchor="middle"
-          className="font-sans font-black"
-        >
+        <line x1="0" y1={height * 0.35} x2="0" y2={-height * 0.3} stroke="#4338ca" strokeWidth="0.28" />
+        <polygon points={`0,${-height * 0.35} -0.7,${-height * 0.22} 0.7,${-height * 0.22}`} fill="#4338ca" />
+        <rect x="-1.5" y="-0.7" width="3.0" height="1.4" fill="#4338ca" rx="0.3" />
+        <text x="0" y="0.3" fill="#ffffff" fontSize="0.8" fontWeight="900" textAnchor="middle">
           UP
         </text>
       </g>

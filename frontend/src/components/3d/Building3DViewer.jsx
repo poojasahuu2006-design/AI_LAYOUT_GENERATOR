@@ -1,8 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { 
-  Armchair, Home, Download
+  Box, Eye, Layers, Maximize2, RotateCcw, Compass, Camera, 
+  Sliders, ChevronRight, X, Sparkles, Ruler, Download, Scissors, 
+  Sun, Check, AlertCircle, Info, ChevronDown, SplitSquareVertical
 } from 'lucide-react';
 import { 
   createOakWoodTexture, 
@@ -15,728 +17,1534 @@ import {
   createBrickWallTexture
 } from './textureGenerator';
 import { buildRoomFurniture } from './furniture3DBuilder';
+import { buildBimModel } from '../../services/bimModelEngine';
+import { exportThreeSceneToObj, exportBimJson, capture3DScreenshot } from '../../utils/bimExportUtils';
 
-export default function Building3DViewer({ layout, onSwitchTo2D, onSelectRoom }) {
+export default function Building3DViewer({ 
+  layout, 
+  onSwitchTo2D, 
+  onSelectRoom,
+  bimSettings = {},
+  onUpdateBimSettings
+}) {
   const mountRef = useRef(null);
 
-  // 3D View Controls State
-  const [floor3DView, setFloor3DView] = useState('both'); // 'ground' | 'first' | 'both'
-  const [renderMode, setRenderMode] = useState('realistic'); // 'realistic' | 'wireframe' | 'structural' | 'xray'
-  const [timeOfDay, setTimeOfDay] = useState('noon'); // 'morning' | 'noon' | 'sunset' | 'night'
-  const [showRoofSlab, setShowRoofSlab] = useState(false);
+  // 1. BIM Model Generation from Synchronized 2D Layout Geometry
+  const bimModel = useMemo(() => {
+    return buildBimModel(layout, bimSettings);
+  }, [layout, bimSettings]);
+
+  // 2. View Navigation & Level Selection State
+  const [activeLevelView, setActiveLevelView] = useState('all'); // 'all' | 'level_0' | 'level_1'
+  const [viewStyle, setViewStyle] = useState('cutaway'); // 'cutaway' (3D Floor Plan) | 'full' (Full Facade)
+  const [displayMode, setDisplayMode] = useState('presentation'); // 'presentation' | 'technical'
+  const [showRoof, setShowRoof] = useState(false); // Default false in cutaway, true in full
   const [showFurniture, setShowFurniture] = useState(true);
-  const [explodedHeight, setExplodedHeight] = useState(0); // 0 to 15 ft separation
-  const [selected3DRoom, setSelected3DRoom] = useState(null);
+  const [showRoomLabels, setShowRoomLabels] = useState(true);
+  const [timeOfDay, setTimeOfDay] = useState('noon'); // 'morning' | 'noon' | 'sunset'
+  const [explodedDistance, setExplodedDistance] = useState(0); // 0 to 20 ft
+  const [isSectionActive, setIsSectionActive] = useState(false);
+  const [sectionHeight, setSectionHeight] = useState(12); // ft
 
-  const plot = layout?.plot || { width: 30, length: 40, unit: 'ft' };
-  const plotW = plot.width;
-  const plotL = plot.length;
-  const wallHeight = 9; // Realistic architectural floor-to-ceiling clearance
+  // Automatically adjust roof & view style when switching levels
+  const handleLevelChange = (newLevel) => {
+    setActiveLevelView(newLevel);
+    if (newLevel !== 'all') {
+      // In isolated floor mode, show as 3D floor plan so user can see inside rooms!
+      setViewStyle('cutaway');
+      setShowRoof(false);
+    }
+  };
 
-  const floors = layout?.floors || [];
-  const groundFloor = floors.find(f => f.floor === 'ground') || { rooms: layout?.rooms || [] };
-  const firstFloor = floors.find(f => f.floor === 'first') || { rooms: [] };
+  // Selected BIM Element Inspector State
+  const [selectedBimObject, setSelectedBimObject] = useState(null);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
 
-  const controlsRef = useRef(null);
+  // Three.js Scene References
+  const sceneRef = useRef(null);
   const cameraRef = useRef(null);
   const rendererRef = useRef(null);
-  const sceneRef = useRef(null);
-  const raycasterRef = useRef(new THREE.Raycaster());
-  const mouseRef = useRef(new THREE.Vector2());
+  const controlsRef = useRef(null);
+  const buildingGroupRef = useRef(null);
+  const clippingPlaneRef = useRef(null);
+  const selectionBoxRef = useRef(null);
 
+  const plotW = bimModel.plot.width;
+  const plotL = bimModel.plot.length;
+  const unit = bimModel.settings.unit;
+
+  // Sync selected room from external parent
   useEffect(() => {
-    const currentMount = mountRef.current;
-    if (!currentMount) return;
+    if (selectedBimObject && selectedBimObject.type === 'room' && onSelectRoom) {
+      onSelectRoom(selectedBimObject.id);
+    }
+  }, [selectedBimObject]);
 
-    const width = currentMount.clientWidth;
-    const height = currentMount.clientHeight;
+  // 3. Initialize Three.js Scene & Render Engine
+  useEffect(() => {
+    const container = mountRef.current;
+    if (!container) return;
 
-    // 1. Scene Setup
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+
+    // --- Scene Setup ---
     const scene = new THREE.Scene();
     sceneRef.current = scene;
 
-    // Background color based on time of day
-    if (timeOfDay === 'night') scene.background = new THREE.Color('#090d16');
-    else if (timeOfDay === 'sunset') scene.background = new THREE.Color('#fde68a');
-    else if (timeOfDay === 'morning') scene.background = new THREE.Color('#e0f2fe');
-    else scene.background = new THREE.Color('#f1f5f9'); // Daytime neutral sky
+    const bgColors = {
+      morning: 0xf0f9ff,
+      noon: 0xf8fafc,
+      sunset: 0xfef3c7
+    };
+    scene.background = new THREE.Color(bgColors[timeOfDay] || 0xf8fafc);
+    scene.fog = new THREE.FogExp2(scene.background.getHex(), 0.003);
 
-    // Fog for depth realism
-    if (timeOfDay !== 'wireframe') {
-      scene.fog = new THREE.FogExp2(scene.background.getHex(), 0.005);
-    }
-
-    // 2. Camera Setup
-    const camera = new THREE.PerspectiveCamera(45, width / height, 1, 1000);
-    camera.position.set(plotW * 1.4, Math.max(plotW, plotL) * 1.5, plotL * 1.7);
+    // --- Camera Setup: Elevated 45° Architectural Perspective ---
+    const camera = new THREE.PerspectiveCamera(38, width / height, 0.5, 1000);
+    const camDist = Math.max(plotW, plotL) * 1.5;
+    const isSingleFloor = activeLevelView !== 'all';
+    
+    camera.position.set(plotW * 1.35, camDist * 1.1, plotL * 1.4);
     cameraRef.current = camera;
 
-    // 3. Renderer Setup
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    // --- Renderer Setup ---
+    const renderer = new THREE.WebGLRenderer({ 
+      antialias: true, 
+      alpha: true, 
+      preserveDrawingBuffer: true,
+      powerPreference: 'high-performance'
+    });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = timeOfDay === 'night' ? 0.7 : 1.1;
+    renderer.toneMappingExposure = timeOfDay === 'noon' ? 1.05 : 0.95;
+    renderer.localClippingEnabled = true;
     rendererRef.current = renderer;
-    currentMount.appendChild(renderer.domElement);
 
-    // 4. Orbit Controls
+    container.innerHTML = '';
+    container.appendChild(renderer.domElement);
+
+    // --- Orbit Controls ---
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
-    controls.maxPolarAngle = Math.PI / 2 - 0.02;
-    controls.target.set(plotW / 2, 4 + explodedHeight / 2, plotL / 2);
+    controls.dampingFactor = 0.06;
+    controls.maxPolarAngle = Math.PI / 2 - 0.02; // Keep camera above ground
+    controls.minDistance = 5;
+    controls.maxDistance = 250;
+    
+    const targetY = isSingleFloor ? 2.5 : (bimModel.levels.length * bimModel.settings.floorHeight * 0.35);
+    controls.target.set(plotW / 2, targetY, plotL / 2);
     controlsRef.current = controls;
 
-    // 5. Lighting Setup (Time of Day Simulation)
-    let ambientIntensity = 0.65;
-    let hemiSkyColor = 0xffffff;
-    let hemiGroundColor = 0x94a3b8;
-    let sunColor = 0xffffff;
-    let sunIntensity = 1.0;
-    let sunPos = new THREE.Vector3(plotW * 2, 45, plotL * 2);
-
-    if (timeOfDay === 'morning') {
-      ambientIntensity = 0.6;
-      sunColor = 0xffedd5; // Soft warm morning glow
-      sunIntensity = 0.9;
-      sunPos.set(-plotW * 2, 25, plotL * 1.5);
-    } else if (timeOfDay === 'sunset') {
-      ambientIntensity = 0.5;
-      sunColor = 0xf97316; // Warm amber sunset
-      sunIntensity = 1.1;
-      sunPos.set(plotW * 2.5, 18, -plotL * 0.5);
-    } else if (timeOfDay === 'night') {
-      ambientIntensity = 0.25;
-      hemiSkyColor = 0x1e293b;
-      hemiGroundColor = 0x020617;
-      sunColor = 0x38bdf8; // Moonlight
-      sunIntensity = 0.3;
-      sunPos.set(plotW * 1.5, 40, plotL * 1.5);
-    }
-
-    const ambientLight = new THREE.AmbientLight(0xffffff, ambientIntensity);
+    // --- Lighting Rig ---
+    const ambientLight = new THREE.AmbientLight(0xffffff, timeOfDay === 'noon' ? 0.75 : 0.6);
     scene.add(ambientLight);
 
-    const hemiLight = new THREE.HemisphereLight(hemiSkyColor, hemiGroundColor, 0.45);
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x94a3b8, 0.45);
     scene.add(hemiLight);
 
-    const dirLight = new THREE.DirectionalLight(sunColor, sunIntensity);
-    dirLight.position.copy(sunPos);
+    const dirLight = new THREE.DirectionalLight(0xfffaed, 1.2);
+    const sunDist = Math.max(plotW, plotL) * 2;
+    if (timeOfDay === 'morning') {
+      dirLight.position.set(-sunDist, sunDist * 0.9, sunDist * 0.6);
+      dirLight.color.setHex(0xffedd5);
+    } else if (timeOfDay === 'sunset') {
+      dirLight.position.set(sunDist * 1.2, sunDist * 0.5, -sunDist * 0.4);
+      dirLight.color.setHex(0xf97316);
+    } else {
+      dirLight.position.set(sunDist * 0.8, sunDist * 1.3, sunDist);
+      dirLight.color.setHex(0xffffff);
+    }
     dirLight.castShadow = true;
     dirLight.shadow.mapSize.width = 2048;
     dirLight.shadow.mapSize.height = 2048;
-    dirLight.shadow.camera.near = 0.5;
-    dirLight.shadow.camera.far = 300;
-    const d = Math.max(plotW, plotL) * 1.8;
-    dirLight.shadow.camera.left = -d;
-    dirLight.shadow.camera.right = d;
-    dirLight.shadow.camera.top = d;
-    dirLight.shadow.camera.bottom = -d;
-    dirLight.shadow.bias = -0.0002;
+    dirLight.shadow.camera.near = 1;
+    dirLight.shadow.camera.far = sunDist * 3;
+    const shadowSize = Math.max(plotW, plotL) * 1.4;
+    dirLight.shadow.camera.left = -shadowSize;
+    dirLight.shadow.camera.right = shadowSize;
+    dirLight.shadow.camera.top = shadowSize;
+    dirLight.shadow.camera.bottom = -shadowSize;
+    dirLight.shadow.bias = -0.00015;
     scene.add(dirLight);
 
-    // 6. Natural Materials Library
-    const isWire = renderMode === 'wireframe';
-    const isStruct = renderMode === 'structural';
-    const isXray = renderMode === 'xray';
+    // --- Section Clipping Plane ---
+    const clippingPlanes = [];
+    if (isSectionActive) {
+      const plane = new THREE.Plane(new THREE.Vector3(0, -1, 0), sectionHeight);
+      clippingPlanes.push(plane);
+      clippingPlaneRef.current = plane;
+    } else {
+      clippingPlaneRef.current = null;
+    }
 
-    // Procedural Texture instances
-    const oakWoodTex = createOakWoodTexture();
-    const ceramicTileTex = createCeramicTileTexture('#faf5ee', '#b8af9f', 64);
-    const mosaicTileTex = createMosaicTileTexture();
+    // --- Textures & Architectural Materials ---
+    const isTech = displayMode === 'technical';
+    const isCutaway = viewStyle === 'cutaway';
+    const wallHeightEffective = isCutaway ? 4.5 : bimModel.settings.floorHeight;
+
     const concreteTex = createConcreteTexture();
-    const grassTex = createGrassTexture();
-    const stuccoTex = createStuccoWallTexture('#f1ede6');
-    const interiorStuccoTex = createStuccoWallTexture('#faf8f5');
-    const brickTex = createBrickWallTexture();
+    const stuccoExtTex = createStuccoWallTexture('#f3efe6');
+    const stuccoIntTex = createStuccoWallTexture('#faf8f5');
     const teakWoodTex = createTeakWoodTexture();
+    const grassTex = createGrassTexture();
 
     const materials = {
-      // Natural Walls
-      wallExt: isWire
-        ? new THREE.MeshBasicMaterial({ color: '#0284c7', wireframe: true })
-        : isXray
-        ? new THREE.MeshStandardMaterial({ color: '#cbd5e1', transparent: true, opacity: 0.25, roughness: 0.2 })
-        : isStruct
-        ? new THREE.MeshStandardMaterial({ map: brickTex, roughness: 0.8 })
-        : new THREE.MeshStandardMaterial({ map: stuccoTex, roughness: 0.7, metalness: 0.02 }),
-
-      wallInt: isWire
-        ? new THREE.MeshBasicMaterial({ color: '#38bdf8', wireframe: true })
-        : isXray
-        ? new THREE.MeshStandardMaterial({ color: '#e2e8f0', transparent: true, opacity: 0.2, roughness: 0.2 })
-        : new THREE.MeshStandardMaterial({ map: interiorStuccoTex, roughness: 0.6 }),
-
-      // Structural RCC Column Material
-      rccColumn: new THREE.MeshStandardMaterial({ map: concreteTex, roughness: 0.5 }),
-
-      // Natural Doors & Windows
-      doorWood: isWire
-        ? new THREE.MeshBasicMaterial({ color: '#d97706', wireframe: true })
-        : new THREE.MeshStandardMaterial({ map: teakWoodTex, roughness: 0.5 }),
-
-      doorHandle: new THREE.MeshStandardMaterial({ color: '#e2e8f0', metalness: 0.9, roughness: 0.1 }),
-
-      windowGlass: new THREE.MeshPhysicalMaterial({
-        color: '#bae6fd',
-        metalness: 0.1,
-        roughness: 0.05,
-        transmission: 0.85,
-        transparent: true,
-        opacity: 0.4
+      // Exterior Wall with warm modern plaster
+      wallExt: new THREE.MeshStandardMaterial({ 
+        map: stuccoExtTex, 
+        color: isTech ? '#cbd5e1' : '#f8fafc',
+        roughness: 0.85, 
+        clippingPlanes, 
+        clipShadows: true 
+      }),
+      
+      // Interior Partition Wall
+      wallInt: new THREE.MeshStandardMaterial({ 
+        map: stuccoIntTex, 
+        color: isTech ? '#e2e8f0' : '#ffffff',
+        roughness: 0.9, 
+        clippingPlanes, 
+        clipShadows: true 
       }),
 
-      windowFrame: new THREE.MeshStandardMaterial({ color: '#1e293b', roughness: 0.3 }),
-      balconyRailing: new THREE.MeshStandardMaterial({ color: '#334155', metalness: 0.8, roughness: 0.3 }),
-      stairStep: new THREE.MeshStandardMaterial({ map: oakWoodTex, roughness: 0.4 }),
+      // Dark Poche / Cut Cap for top of cut walls (Iconic Revit architectural section look)
+      wallCutCap: new THREE.MeshStandardMaterial({
+        color: '#1e293b',
+        roughness: 0.5,
+        clippingPlanes
+      }),
 
-      // Natural Room Floors
-      floorLiving: isWire
-        ? new THREE.MeshBasicMaterial({ color: '#0284c7', wireframe: true })
-        : new THREE.MeshStandardMaterial({ map: ceramicTileTex, roughness: 0.2 }),
+      // Concrete Plinth & Foundation Beam
+      plinthBeam: new THREE.MeshStandardMaterial({
+        color: '#475569',
+        roughness: 0.7,
+        clippingPlanes
+      }),
 
-      floorBedroom: isWire
-        ? new THREE.MeshBasicMaterial({ color: '#38bdf8', wireframe: true })
-        : new THREE.MeshStandardMaterial({ map: oakWoodTex, roughness: 0.4 }),
+      // Intermediate Slabs & Ceilings
+      slabConcrete: new THREE.MeshStandardMaterial({ 
+        map: concreteTex, 
+        color: '#e2e8f0',
+        roughness: 0.7, 
+        clippingPlanes, 
+        clipShadows: true 
+      }),
 
-      floorKitchen: isWire
-        ? new THREE.MeshBasicMaterial({ color: '#f59e0b', wireframe: true })
-        : new THREE.MeshStandardMaterial({ map: ceramicTileTex, roughness: 0.25 }),
+      // Doors & Openings
+      doorWood: new THREE.MeshStandardMaterial({ map: teakWoodTex, roughness: 0.45, clippingPlanes }),
+      doorFrame: new THREE.MeshStandardMaterial({ color: '#1e293b', roughness: 0.5, clippingPlanes }),
+      doorHandle: new THREE.MeshStandardMaterial({ color: '#f59e0b', metalness: 0.9, roughness: 0.2, clippingPlanes }),
 
-      floorBathroom: isWire
-        ? new THREE.MeshBasicMaterial({ color: '#64748b', wireframe: true })
-        : new THREE.MeshStandardMaterial({ map: mosaicTileTex, roughness: 0.6 }),
+      // Windows
+      windowFrame: new THREE.MeshStandardMaterial({ color: '#0f172a', roughness: 0.35, clippingPlanes }),
+      windowSill: new THREE.MeshStandardMaterial({ color: '#94a3b8', roughness: 0.6, clippingPlanes }),
+      windowGlass: new THREE.MeshPhysicalMaterial({ 
+        color: '#bae6fd', 
+        transmission: 0.85, 
+        opacity: 0.35, 
+        transparent: true, 
+        roughness: 0.05, 
+        metalness: 0.1,
+        ior: 1.5,
+        clippingPlanes 
+      }),
 
-      floorBalcony: new THREE.MeshStandardMaterial({ map: ceramicTileTex, roughness: 0.5 }),
-      floorStair: new THREE.MeshStandardMaterial({ map: oakWoodTex, roughness: 0.4 }),
+      // Balcony Tempered Glass Railing
+      glassRailing: new THREE.MeshPhysicalMaterial({
+        color: '#93c5fd',
+        transmission: 0.9,
+        opacity: 0.45,
+        transparent: true,
+        roughness: 0.1,
+        metalness: 0.1,
+        clippingPlanes
+      }),
+      railingPost: new THREE.MeshStandardMaterial({ color: '#0f172a', metalness: 0.8, roughness: 0.2 }),
 
-      // Plinth & Roof Slab
-      slabConcrete: isWire
-        ? new THREE.MeshBasicMaterial({ color: '#94a3b8', wireframe: true })
-        : new THREE.MeshStandardMaterial({ map: concreteTex, roughness: 0.6 }),
+      // Stairs
+      stairTread: new THREE.MeshStandardMaterial({ color: '#d97706', roughness: 0.4, clippingPlanes }),
+      stairWaist: new THREE.MeshStandardMaterial({ map: concreteTex, color: '#94a3b8', roughness: 0.7, clippingPlanes }),
+      stairRailing: new THREE.MeshStandardMaterial({ color: '#0f172a', metalness: 0.8, roughness: 0.2, clippingPlanes }),
 
-      // Exterior Landscape Lawn
-      grassLawn: isWire
-        ? new THREE.MeshBasicMaterial({ color: '#10b981', wireframe: true })
-        : new THREE.MeshStandardMaterial({ map: grassTex, roughness: 0.9 }),
+      // Roof
+      roofSlab: new THREE.MeshStandardMaterial({ color: '#475569', roughness: 0.8, clippingPlanes }),
+      roofParapet: new THREE.MeshStandardMaterial({ color: '#e2e8f0', roughness: 0.85, clippingPlanes }),
+      roofCoping: new THREE.MeshStandardMaterial({ color: '#1e293b', roughness: 0.4, clippingPlanes }),
+      roofTile: new THREE.MeshStandardMaterial({ color: '#9a3412', roughness: 0.65, clippingPlanes }),
 
-      // Surrounding Curb / Driveway Pavers
-      curbStone: new THREE.MeshStandardMaterial({ map: concreteTex, roughness: 0.7 })
+      // Site Landscape
+      grassLawn: new THREE.MeshStandardMaterial({ map: grassTex, roughness: 0.95 }),
+      curbStone: new THREE.MeshStandardMaterial({ map: concreteTex, color: '#94a3b8', roughness: 0.75 })
     };
 
-    // 7. Exterior Landscaping / Site Base
-    const siteMargin = Math.max(plotW, plotL) * 0.4;
-    const siteGeo = new THREE.BoxGeometry(plotW + siteMargin * 2, 0.4, plotL + siteMargin * 2);
-    const siteMesh = new THREE.Mesh(siteGeo, materials.grassLawn);
+    // --- Master Building Geometry Group ---
+    const masterBuildingGroup = new THREE.Group();
+    buildingGroupRef.current = masterBuildingGroup;
+    scene.add(masterBuildingGroup);
+
+    // 1. Exterior Site Ground & Curb
+    const siteMargin = Math.max(plotW, plotL) * 0.35;
+    const siteMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(plotW + siteMargin * 2, 0.4, plotL + siteMargin * 2),
+      materials.grassLawn
+    );
     siteMesh.position.set(plotW / 2, -0.2, plotL / 2);
     siteMesh.receiveShadow = true;
-    scene.add(siteMesh);
+    masterBuildingGroup.add(siteMesh);
 
-    // Exterior Concrete Curb Border around Plot
-    const curbGeo = new THREE.BoxGeometry(plotW + 4, 0.3, plotL + 4);
-    const curbMesh = new THREE.Mesh(curbGeo, materials.curbStone);
+    // Plot Foundation Curb
+    const curbMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(plotW + 3, 0.25, plotL + 3),
+      materials.curbStone
+    );
     curbMesh.position.set(plotW / 2, -0.05, plotL / 2);
     curbMesh.receiveShadow = true;
-    scene.add(curbMesh);
+    masterBuildingGroup.add(curbMesh);
 
-    const labelCoordsList = [];
+    // 2. Build Each BIM Level Geometry
+    bimModel.levelData.forEach((ld, levelIdx) => {
+      const level = ld.level;
+      if (level.floorType === 'roof') return;
 
-    // Helper: Build 3D Floor Geometry Group
-    const createFloor3DGroup = (floorRooms, yElevation, isGround) => {
-      const group = new THREE.Group();
+      // Filter level visibility
+      if (activeLevelView !== 'all' && activeLevelView !== level.id) {
+        return;
+      }
 
-      // Plinth / Foundation Slab (0.5m / 1.5ft plinth height per NBC 2016)
-      const slabGeo = new THREE.BoxGeometry(plotW, 0.5, plotL);
-      const slabMesh = new THREE.Mesh(slabGeo, materials.slabConcrete);
-      slabMesh.position.set(plotW / 2, yElevation + 0.25, plotL / 2);
-      slabMesh.receiveShadow = true;
-      slabMesh.castShadow = true;
-      group.add(slabMesh);
+      // CRITICAL FIX: In isolated single-floor view, normalize elevation so floor rests on ground!
+      const isIsolated = activeLevelView !== 'all';
+      const groundElevationOffset = isIsolated ? -level.elevation : 0;
+      const explodeY = explodedDistance * levelIdx;
 
-      // Render Rooms
-      floorRooms.forEach((room) => {
-        const rx = room.x;
-        const ry = room.y;
-        const rw = room.width;
-        const rh = room.height;
+      const levelGroup = new THREE.Group();
+      levelGroup.name = `Level_${level.name}`;
+      levelGroup.position.y = groundElevationOffset + explodeY;
 
-        // Store label coordinate for 3D Overlay
-        labelCoordsList.push({
-          id: room.id,
-          name: room.name,
-          dimensions: `${rw}' × ${rh}' (${room.area} sq.ft)`,
-          floor: room.floor,
-          worldPos: new THREE.Vector3(rx + rw / 2, yElevation + wallHeight + 1.2, ry + rh / 2)
-        });
-
-        // 1. Room Floor Surface
-        let rFloorMat = materials.floorLiving;
-        if (['Bedroom', 'Master Bedroom', 'Study Room'].includes(room.type)) rFloorMat = materials.floorBedroom;
-        else if (room.type === 'Kitchen') rFloorMat = materials.floorKitchen;
-        else if (['Bathroom', 'Washroom'].includes(room.type)) rFloorMat = materials.floorBathroom;
-        else if (room.type === 'Balcony') rFloorMat = materials.floorBalcony;
-        else if (room.type === 'Staircase') rFloorMat = materials.floorStair;
-
-        const roomFloorGeo = new THREE.BoxGeometry(rw - 0.05, 0.1, rh - 0.05);
-        const roomFloorMesh = new THREE.Mesh(roomFloorGeo, rFloorMat);
-        roomFloorMesh.position.set(rx + rw / 2, yElevation + 0.55, ry + rh / 2);
-        roomFloorMesh.receiveShadow = true;
-        roomFloorMesh.userData = { roomId: room.id, roomObj: room };
-        group.add(roomFloorMesh);
-
-        // 2. Extruded Walls
-        const wallThick = 0.4; // 9-inch outer masonry wall thickness
-
-        // North Wall
-        const nWallGeo = new THREE.BoxGeometry(rw, wallHeight, wallThick);
-        const nWall = new THREE.Mesh(nWallGeo, materials.wallExt);
-        nWall.position.set(rx + rw / 2, yElevation + 0.5 + wallHeight / 2, ry);
-        nWall.castShadow = true;
-        nWall.receiveShadow = true;
-        group.add(nWall);
-
-        // South Wall
-        const sWallGeo = new THREE.BoxGeometry(rw, wallHeight, wallThick);
-        const sWall = new THREE.Mesh(sWallGeo, materials.wallExt);
-        sWall.position.set(rx + rw / 2, yElevation + 0.5 + wallHeight / 2, ry + rh);
-        sWall.castShadow = true;
-        sWall.receiveShadow = true;
-        group.add(sWall);
-
-        // West Wall
-        const wWallGeo = new THREE.BoxGeometry(wallThick, wallHeight, rh);
-        const wWall = new THREE.Mesh(wWallGeo, materials.wallInt);
-        wWall.position.set(rx, yElevation + 0.5 + wallHeight / 2, ry + rh / 2);
-        wWall.castShadow = true;
-        wWall.receiveShadow = true;
-        group.add(wWall);
-
-        // East Wall
-        const eWallGeo = new THREE.BoxGeometry(wallThick, wallHeight, rh);
-        const eWall = new THREE.Mesh(eWallGeo, materials.wallInt);
-        eWall.position.set(rx + rw, yElevation + 0.5 + wallHeight / 2, ry + rh / 2);
-        eWall.castShadow = true;
-        eWall.receiveShadow = true;
-        group.add(eWall);
-
-        // 3. Structural RCC Columns at Corners in Structural Mode
-        if (isStruct) {
-          const colGeo = new THREE.BoxGeometry(0.8, wallHeight, 0.8);
-          const colPositions = [
-            [rx, ry], [rx + rw, ry], [rx, ry + rh], [rx + rw, ry + rh]
-          ];
-          colPositions.forEach(([cx, cy]) => {
-            const col = new THREE.Mesh(colGeo, materials.rccColumn);
-            col.position.set(cx, yElevation + 0.5 + wallHeight / 2, cy);
-            group.add(col);
-          });
-        }
-
-        // 4. Architectural 3D Staircase Geometry
-        if (room.type === 'Staircase') {
-          const stepCount = 9;
-          const stepDepth = rh / stepCount;
-          const stepHeight = wallHeight / stepCount;
-
-          for (let i = 0; i < stepCount; i++) {
-            const stepGeo = new THREE.BoxGeometry(rw - 0.6, stepHeight, stepDepth);
-            const stepMesh = new THREE.Mesh(stepGeo, materials.stairStep);
-            stepMesh.position.set(
-              rx + rw / 2,
-              yElevation + 0.55 + i * stepHeight + stepHeight / 2,
-              ry + i * stepDepth + stepDepth / 2
-            );
-            stepMesh.castShadow = true;
-            stepMesh.receiveShadow = true;
-            group.add(stepMesh);
-          }
-        }
-
-        // 5. Architectural 3D Balcony Railing Geometry
-        if (room.type === 'Balcony') {
-          const railGeo = new THREE.BoxGeometry(rw, 3.0, 0.15);
-          const railMesh = new THREE.Mesh(railGeo, materials.balconyRailing);
-          railMesh.position.set(rx + rw / 2, yElevation + 0.55 + 1.5, ry + rh);
-          railMesh.castShadow = true;
-          group.add(railMesh);
-        }
-
-        // 6. Architectural 3D Doors with Frames & Handles
-        (room.doors || []).forEach(d => {
-          const dw = Math.min(d.width || 3.2, rw - 0.4);
-          const doorGeo = new THREE.BoxGeometry(dw, 7.0, 0.2);
-          const doorMesh = new THREE.Mesh(doorGeo, materials.doorWood);
-          doorMesh.position.set(d.x + dw / 2, yElevation + 0.5 + 3.5, d.y);
-          doorMesh.castShadow = true;
-          group.add(doorMesh);
-
-          // Brass/Chrome Handle
-          const handleGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.6, 8);
-          const handleMesh = new THREE.Mesh(handleGeo, materials.doorHandle);
-          handleMesh.position.set(d.x + dw * 0.85, yElevation + 0.5 + 3.2, d.y + 0.15);
-          handleMesh.rotation.z = Math.PI / 2;
-          group.add(handleMesh);
-        });
-
-        // 7. Architectural 3D Windows with Glass & Frames
-        (room.windows || []).forEach(w => {
-          const ww = Math.min(w.width || 4.0, rw - 0.6);
-          // Glass Pane
-          const winGeo = new THREE.BoxGeometry(ww, 4.2, 0.1);
-          const winMesh = new THREE.Mesh(winGeo, materials.windowGlass);
-          winMesh.position.set(w.x + ww / 2, yElevation + 0.5 + 4.8, w.y);
-          group.add(winMesh);
-
-          // Window Frame Surround
-          const frameGeo = new THREE.BoxGeometry(ww + 0.2, 4.4, 0.25);
-          const frameMesh = new THREE.Mesh(frameGeo, materials.windowFrame);
-          frameMesh.position.set(w.x + ww / 2, yElevation + 0.5 + 4.8, w.y);
-          group.add(frameMesh);
-        });
-
-        // 8. 3D Furniture Fixtures
-        if (showFurniture && !isWire) {
-          const furnitureMesh = buildRoomFurniture(room, yElevation, materials);
-          group.add(furnitureMesh);
-        }
-
-        // 9. Night Interior Downlight per Room
-        if (timeOfDay === 'night') {
-          const roomLight = new THREE.PointLight(0xffedd5, 1.2, 20);
-          roomLight.position.set(rx + rw / 2, yElevation + wallHeight - 0.5, ry + rh / 2);
-          group.add(roomLight);
-        }
-
+      // A. Ground Plinth Slab or Intermediate Floor Slab
+      (ld.floors || []).forEach(slab => {
+        const slabMesh = buildBimSlabMesh(slab, materials, isTech);
+        slabMesh.userData = { bimType: 'slab', data: slab, level };
+        levelGroup.add(slabMesh);
       });
 
-      return group;
-    };
+      // B. Room Floor Finishes (Tile, Wood, Marble per room)
+      ld.rooms.forEach(room => {
+        const roomFloorMesh = buildRoomFloorMesh(room, level.elevation, materials);
+        roomFloorMesh.userData = { bimType: 'room', data: room, level };
+        levelGroup.add(roomFloorMesh);
 
-    // Render Ground Floor 3D
-    if (floor3DView === 'both' || floor3DView === 'ground') {
-      const ground3DGroup = createFloor3DGroup(groundFloor.rooms || [], 0, true);
-      scene.add(ground3DGroup);
+        // Balcony Glass Railing
+        if (room.type === 'Balcony') {
+          const balconyRail = buildBalconyGlassRailing(room, level.elevation, materials);
+          levelGroup.add(balconyRail);
+        }
+
+        // Optional 3D Furniture
+        if (showFurniture) {
+          const furn = buildRoomFurniture(room, level.elevation, materials);
+          furn.userData = { bimType: 'furniture', roomId: room.id };
+          levelGroup.add(furn);
+        }
+
+        // Optional 3D Room Badges (Tags with Name and Dimensions)
+        if (showRoomLabels && isCutaway) {
+          const badge = createRoomLabelSprite(room, level.elevation + wallHeightEffective + 1.2);
+          levelGroup.add(badge);
+        }
+      });
+
+      // C. Parametric Architectural Walls with True Openings
+      ld.walls.forEach(wall => {
+        const wallGroup = buildParametricWallWithOpenings(
+          wall, 
+          materials, 
+          isTech, 
+          wallHeightEffective,
+          isCutaway
+        );
+        wallGroup.userData = { bimType: 'wall', data: wall, level };
+        levelGroup.add(wallGroup);
+      });
+
+      // D. Architectural 3D Staircases (Only connects Ground to First Floor)
+      ld.stairs.forEach(stair => {
+        const stairGroup = buildArchitecturalStair(stair, materials);
+        stairGroup.userData = { bimType: 'stair', data: stair, level };
+        levelGroup.add(stairGroup);
+      });
+
+      masterBuildingGroup.add(levelGroup);
+    });
+
+    // 3. Build Parametric Roof System (Only in Full Facade mode or when roof explicitly toggled)
+    const shouldRenderRoof = showRoof && (activeLevelView === 'all' || activeLevelView === 'roof');
+    if (shouldRenderRoof) {
+      const roofLevel = bimModel.levels.find(l => l.floorType === 'roof') || bimModel.levels[bimModel.levels.length - 1];
+      const roofExplodeY = explodedDistance * (bimModel.levels.length - 1);
+      const roofGroup = buildBimRoofSystem(bimModel.roof, roofLevel, materials, isTech);
+      roofGroup.position.y = roofExplodeY;
+      roofGroup.userData = { bimType: 'roof', data: bimModel.roof, level: roofLevel };
+      masterBuildingGroup.add(roofGroup);
     }
 
-    // Render First Floor 3D
-    if ((floor3DView === 'both' || floor3DView === 'first') && firstFloor.rooms && firstFloor.rooms.length > 0) {
-      const firstElevation = floor3DView === 'first' ? 0 : wallHeight + 0.5 + explodedHeight;
-      const first3DGroup = createFloor3DGroup(firstFloor.rooms, firstElevation, false);
-      scene.add(first3DGroup);
+    // 4. Technical Mode: Level Datum Lines & Elevation Markers
+    if (isTech) {
+      const datumGroup = buildBimLevelDatums(bimModel.levels, plotW, plotL, unit);
+      masterBuildingGroup.add(datumGroup);
     }
 
-    // Render Roof / Terrace Slab if enabled
-    if (showRoofSlab) {
-      const roofElevation = (firstFloor.rooms && firstFloor.rooms.length > 0 && floor3DView !== 'ground')
-        ? (wallHeight + 0.5 + explodedHeight + wallHeight + 0.5)
-        : (wallHeight + 0.5);
+    // --- Interactive Raycasting for Object Selection ---
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
 
-      const roofGroup = new THREE.Group();
-      // Main Slab
-      const roofGeo = new THREE.BoxGeometry(plotW + 0.5, 0.5, plotL + 0.5);
-      const roofMesh = new THREE.Mesh(roofGeo, materials.slabConcrete);
-      roofMesh.position.set(plotW / 2, roofElevation + 0.25, plotL / 2);
-      roofMesh.castShadow = true;
-      roofMesh.receiveShadow = true;
-      roofGroup.add(roofMesh);
+    const handleCanvasClick = (e) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
-      // Parapet Wall (3ft safety height)
-      const parapetHeight = 3.0;
-      const pWallThick = 0.3;
-      const nParapet = new THREE.Mesh(new THREE.BoxGeometry(plotW + 0.5, parapetHeight, pWallThick), materials.wallExt);
-      nParapet.position.set(plotW / 2, roofElevation + 0.5 + parapetHeight / 2, 0);
-      roofGroup.add(nParapet);
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObjects(masterBuildingGroup.children, true);
 
-      const sParapet = new THREE.Mesh(new THREE.BoxGeometry(plotW + 0.5, parapetHeight, pWallThick), materials.wallExt);
-      sParapet.position.set(plotW / 2, roofElevation + 0.5 + parapetHeight / 2, plotL);
-      roofGroup.add(sParapet);
+      if (intersects.length > 0) {
+        let target = intersects[0].object;
+        while (target && target !== masterBuildingGroup && !target.userData?.bimType) {
+          target = target.parent;
+        }
 
-      scene.add(roofGroup);
-    }
+        if (target && target.userData?.bimType) {
+          const { bimType, data, level } = target.userData;
+          setSelectedBimObject({
+            type: bimType,
+            data,
+            level,
+            object3d: target
+          });
+          setInspectorOpen(true);
 
-    // Click handler for 3D room selection
-    const handleCanvasClick = (event) => {
-      if (!mountRef.current) return;
-      const rect = mountRef.current.getBoundingClientRect();
-      mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-      mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-      raycasterRef.current.setFromCamera(mouseRef.current, camera);
-      const intersects = raycasterRef.current.intersectObjects(scene.children, true);
-
-      const hitRoomMesh = intersects.find(hit => hit.object.userData && hit.object.userData.roomId);
-      if (hitRoomMesh) {
-        setSelected3DRoom(hitRoomMesh.object.userData.roomObj);
-        if (typeof onSelectRoom === 'function') {
-          onSelectRoom(hitRoomMesh.object.userData.roomObj);
+          if (selectionBoxRef.current) {
+            scene.remove(selectionBoxRef.current);
+          }
+          const boxHelper = new THREE.BoxHelper(target, 0x06b6d4);
+          boxHelper.material.depthTest = false;
+          boxHelper.material.transparent = true;
+          boxHelper.material.opacity = 0.9;
+          selectionBoxRef.current = boxHelper;
+          scene.add(boxHelper);
+          return;
         }
       }
+
+      if (selectionBoxRef.current) {
+        scene.remove(selectionBoxRef.current);
+        selectionBoxRef.current = null;
+      }
+      setSelectedBimObject(null);
     };
+
     renderer.domElement.addEventListener('click', handleCanvasClick);
 
-    // Animation Loop
-    let animationFrameId;
-    const animate = () => {
-      animationFrameId = requestAnimationFrame(animate);
-      controls.update();
-      renderer.render(scene, camera);
-    };
-    animate();
-
-    // Resize Handler
+    // --- Resize Observer ---
     const handleResize = () => {
-      if (!mountRef.current) return;
-      const w = mountRef.current.clientWidth;
-      const h = mountRef.current.clientHeight;
+      if (!container) return;
+      const w = container.clientWidth;
+      const h = container.clientHeight;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
     };
     window.addEventListener('resize', handleResize);
 
-    return () => {
-      cancelAnimationFrame(animationFrameId);
-      window.removeEventListener('resize', handleResize);
-      if (currentMount.contains(renderer.domElement)) {
-        renderer.domElement.removeEventListener('click', handleCanvasClick);
-        currentMount.removeChild(renderer.domElement);
+    // --- Animation Loop ---
+    let animId;
+    const animate = () => {
+      animId = requestAnimationFrame(animate);
+      controls.update();
+      if (selectionBoxRef.current) {
+        selectionBoxRef.current.update();
       }
+      renderer.render(scene, camera);
+    };
+    animate();
+
+    return () => {
+      cancelAnimationFrame(animId);
+      window.removeEventListener('resize', handleResize);
+      renderer.domElement.removeEventListener('click', handleCanvasClick);
       renderer.dispose();
     };
-  }, [layout, floor3DView, renderMode, timeOfDay, showRoofSlab, showFurniture, explodedHeight]);
+  }, [
+    bimModel, 
+    activeLevelView, 
+    viewStyle, 
+    displayMode, 
+    showRoof, 
+    showFurniture, 
+    showRoomLabels, 
+    timeOfDay, 
+    explodedDistance, 
+    isSectionActive, 
+    sectionHeight
+  ]);
 
-  // Set Preset Camera Angles
-  const setCameraAngle = (viewType) => {
-    if (!cameraRef.current || !controlsRef.current) return;
+  // --- Camera View Presets ---
+  const setCameraPreset = (preset) => {
     const camera = cameraRef.current;
     const controls = controlsRef.current;
+    if (!camera || !controls) return;
 
-    if (viewType === 'top') {
-      camera.position.set(plotW / 2, Math.max(plotW, plotL) * 2.2, plotL / 2 + 0.1);
-    } else if (viewType === 'front') {
-      camera.position.set(plotW / 2, 8, plotL * 2.2);
-    } else if (viewType === 'side') {
-      camera.position.set(plotW * 2.2, 8, plotL / 2);
-    } else if (viewType === 'iso') {
-      camera.position.set(plotW * 1.4, Math.max(plotW, plotL) * 1.5, plotL * 1.7);
+    const midX = plotW / 2;
+    const midZ = plotL / 2;
+    const dist = Math.max(plotW, plotL) * 1.5;
+    const isSingleFloor = activeLevelView !== 'all';
+    const targetY = isSingleFloor ? 2.5 : (bimModel.levels.length * bimModel.settings.floorHeight * 0.35);
+
+    controls.target.set(midX, targetY, midZ);
+
+    switch (preset) {
+      case 'top':
+        camera.position.set(midX, dist * 1.6, midZ + 0.01);
+        break;
+      case 'front':
+        camera.position.set(midX, targetY + dist * 0.3, midZ + dist);
+        break;
+      case 'side':
+        camera.position.set(midX - dist, targetY + dist * 0.3, midZ);
+        break;
+      case 'iso':
+      default:
+        camera.position.set(plotW * 1.35, dist * 1.1, plotL * 1.4);
+        break;
     }
-    controls.target.set(plotW / 2, 4 + explodedHeight / 2, plotL / 2);
     controls.update();
   };
 
-  // High-Resolution 3D Snapshot Capture
-  const handleCaptureSnapshot = () => {
-    if (!rendererRef.current) return;
-    const dataUrl = rendererRef.current.domElement.toDataURL('image/png');
-    const a = document.createElement('a');
-    a.href = dataUrl;
-    a.download = `${layout.projectName || 'Building_Model'}_3D_Render.png`;
-    a.click();
+  const handleFitToScreen = () => {
+    setCameraPreset('iso');
+  };
+
+  // --- Export Handlers ---
+  const handleExportObj = () => {
+    if (buildingGroupRef.current) {
+      exportThreeSceneToObj(buildingGroupRef.current, `${bimModel.name.replace(/\s+/g, '_')}_BIM.obj`);
+    }
+  };
+
+  const handleScreenshot = () => {
+    if (rendererRef.current) {
+      capture3DScreenshot(rendererRef.current, `${bimModel.name.replace(/\s+/g, '_')}_3D.png`);
+    }
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-900 text-slate-100 rounded-3xl border border-slate-800 overflow-hidden shadow-2xl relative select-none font-sans">
+    <div className="relative w-full h-full flex flex-col bg-slate-900 overflow-hidden select-none font-sans">
       
-      {/* 3D TOP TOOLBAR */}
-      <div className="bg-slate-950/90 backdrop-blur-md border-b border-slate-800 p-3 flex flex-wrap items-center justify-between gap-3 shrink-0 z-10">
+      {/* 1. TOP COMPACT ARCHITECTURAL CONTROL BAR */}
+      <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between gap-2 pointer-events-none">
         
-        {/* FLOOR SELECTOR */}
-        <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-2xl border border-slate-800">
-          <span className="px-2 text-[10px] font-black text-slate-400 uppercase tracking-wider">Elevation:</span>
-          
+        {/* Left Island: Level Switcher */}
+        <div className="flex items-center gap-1 p-1 bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-xl shadow-lg pointer-events-auto">
           <button
-            onClick={() => setFloor3DView('ground')}
-            className={`px-3 py-1.5 text-xs font-bold rounded-xl transition ${
-              floor3DView === 'ground' ? 'bg-sky-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800'
+            onClick={() => handleLevelChange('all')}
+            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+              activeLevelView === 'all'
+                ? 'bg-sky-600 text-white shadow-xs'
+                : 'text-slate-300 hover:text-white hover:bg-slate-800'
             }`}
           >
-            Ground Floor
+            <Box className="w-3.5 h-3.5" /> 3D Building
           </button>
 
-          {firstFloor.rooms && firstFloor.rooms.length > 0 && (
+          {bimModel.levels.filter(l => l.floorType !== 'roof').map(lvl => (
             <button
-              onClick={() => setFloor3DView('first')}
-              className={`px-3 py-1.5 text-xs font-bold rounded-xl transition ${
-                floor3DView === 'first' ? 'bg-sky-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800'
+              key={lvl.id}
+              onClick={() => handleLevelChange(lvl.id)}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                activeLevelView === lvl.id
+                  ? 'bg-sky-600 text-white shadow-xs'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800'
               }`}
             >
-              First Floor
-            </button>
-          )}
-
-          {firstFloor.rooms && firstFloor.rooms.length > 0 && (
-            <button
-              onClick={() => setFloor3DView('both')}
-              className={`px-3 py-1.5 text-xs font-bold rounded-xl transition ${
-                floor3DView === 'both' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800'
-              }`}
-            >
-              Both Floors
-            </button>
-          )}
-        </div>
-
-        {/* RENDER STYLE SELECTOR */}
-        <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-2xl border border-slate-800">
-          <span className="px-2 text-[10px] font-black text-slate-400 uppercase tracking-wider">Style:</span>
-          {[
-            { id: 'realistic', label: '🌿 Realistic' },
-            { id: 'wireframe', label: '📐 CAD Wire' },
-            { id: 'structural', label: '🧱 Structural' },
-            { id: 'xray', label: '🪟 X-Ray' }
-          ].map(mode => (
-            <button
-              key={mode.id}
-              onClick={() => setRenderMode(mode.id)}
-              className={`px-2.5 py-1 text-xs font-bold rounded-xl transition ${
-                renderMode === mode.id ? 'bg-amber-500 text-slate-950 shadow-sm' : 'text-slate-400 hover:bg-slate-800'
-              }`}
-            >
-              {mode.label}
+              <Layers className="w-3.5 h-3.5" /> {lvl.name}
             </button>
           ))}
         </div>
 
-        {/* TIME OF DAY LIGHTING */}
-        <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-2xl border border-slate-800">
-          <span className="px-2 text-[10px] font-black text-slate-400 uppercase tracking-wider">Sun:</span>
-          {[
-            { id: 'morning', label: '🌅 8 AM' },
-            { id: 'noon', label: '☀️ 12 PM' },
-            { id: 'sunset', label: '🌇 5 PM' },
-            { id: 'night', label: '🌙 9 PM' }
-          ].map(tod => (
+        {/* Right Island: View Style + Camera Presets + Export */}
+        <div className="flex items-center gap-1.5 p-1 bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-xl shadow-lg pointer-events-auto">
+          {/* Mode Switcher */}
+          <div className="flex items-center bg-slate-800 p-0.5 rounded-lg text-xs font-semibold">
             <button
-              key={tod.id}
-              onClick={() => setTimeOfDay(tod.id)}
-              className={`px-2 py-1 text-xs font-bold rounded-xl transition ${
-                timeOfDay === tod.id ? 'bg-sky-500 text-slate-950 font-black' : 'text-slate-400 hover:bg-slate-800'
+              onClick={() => { setViewStyle('cutaway'); setShowRoof(false); }}
+              className={`px-2 py-0.5 rounded-md transition-all flex items-center gap-1 text-[11px] ${
+                viewStyle === 'cutaway' ? 'bg-sky-500 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
               }`}
+              title="Show 3D Floor Plan Interior with cut walls & furniture"
             >
-              {tod.label}
+              <SplitSquareVertical className="w-3 h-3 text-amber-300" /> 3D Plan
             </button>
-          ))}
+            <button
+              onClick={() => { setViewStyle('full'); setShowRoof(true); }}
+              className={`px-2 py-0.5 rounded-md transition-all flex items-center gap-1 text-[11px] ${
+                viewStyle === 'full' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="Show Full Building Exterior Facade"
+            >
+              <Box className="w-3 h-3" /> Facade
+            </button>
+          </div>
+
+          <div className="h-3.5 w-px bg-slate-700 mx-0.5" />
+
+          {/* Camera Presets */}
+          <div className="flex items-center gap-0.5">
+            <button 
+              onClick={() => setCameraPreset('iso')} 
+              title="Isometric 3D View"
+              className="px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-md text-[11px] font-medium"
+            >
+              Iso
+            </button>
+            <button 
+              onClick={() => setCameraPreset('top')} 
+              title="Plan / Top View"
+              className="px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-md text-[11px] font-medium"
+            >
+              Top
+            </button>
+            <button 
+              onClick={() => setCameraPreset('front')} 
+              title="Front Elevation"
+              className="px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-md text-[11px] font-medium"
+            >
+              Front
+            </button>
+            <button 
+              onClick={handleFitToScreen} 
+              title="Fit to Screen"
+              className="p-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-md"
+            >
+              <RotateCcw className="w-3 h-3" />
+            </button>
+          </div>
+
+          <div className="h-3.5 w-px bg-slate-700 mx-0.5" />
+
+          {/* Quick Exports */}
+          <button
+            onClick={handleScreenshot}
+            title="Download Screenshot"
+            className="p-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-md"
+          >
+            <Camera className="w-3.5 h-3.5 text-sky-400" />
+          </button>
+
+          <button
+            onClick={handleExportObj}
+            title="Export OBJ 3D Model"
+            className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-emerald-400 rounded-md text-[11px] font-bold flex items-center gap-1"
+          >
+            <Download className="w-3 h-3" /> OBJ
+          </button>
         </div>
-
-        {/* CONTROLS & TOGGLES */}
-        <div className="flex items-center gap-2">
-          
-          {/* Furniture Toggle */}
-          <button
-            onClick={() => setShowFurniture(!showFurniture)}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 ${
-              showFurniture ? 'bg-teal-950 border-teal-500 text-teal-300' : 'bg-slate-900 border-slate-800 text-slate-400'
-            }`}
-            title="Toggle 3D Architectural Furniture"
-          >
-            <Armchair className="w-3.5 h-3.5" />
-            <span>Furniture</span>
-          </button>
-
-          {/* Roof Slab Toggle */}
-          <button
-            onClick={() => setShowRoofSlab(!showRoofSlab)}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 ${
-              showRoofSlab ? 'bg-amber-950 border-amber-500 text-amber-300' : 'bg-slate-900 border-slate-800 text-slate-400'
-            }`}
-            title="Toggle Concrete Terrace Roof"
-          >
-            <Home className="w-3.5 h-3.5" />
-            <span>Roof Slab</span>
-          </button>
-
-          {/* Snapshot Capture */}
-          <button
-            onClick={handleCaptureSnapshot}
-            className="p-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-200 rounded-xl transition"
-            title="Export 3D Snapshot"
-          >
-            <Download className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={onSwitchTo2D}
-            className="px-3.5 py-1.5 bg-white hover:bg-slate-100 text-slate-950 font-black text-xs rounded-xl shadow-lg transition"
-          >
-            2D CAD Plan
-          </button>
-        </div>
-
       </div>
 
-      {/* SECONDARY TOOLBAR: EXPLODED VIEW & CAMERA PRESETS */}
-      <div className="bg-slate-950/60 border-b border-slate-800/80 px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
-        
-        {/* Exploded View Slider */}
-        {firstFloor.rooms && firstFloor.rooms.length > 0 && floor3DView === 'both' && (
-          <div className="flex items-center gap-2">
-            <span className="text-slate-400 font-bold uppercase text-[10px]">Floor Explosion:</span>
+      {/* 2. THREE.JS 3D VIEWPORT CANVAS */}
+      <div ref={mountRef} className="w-full h-full cursor-grab active:cursor-grabbing outline-hidden" />
+
+      {/* 3. BOTTOM CENTERED ARCHITECTURAL TOOLBAR */}
+      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">
+        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900/90 backdrop-blur-md border border-slate-700/80 rounded-2xl shadow-2xl text-xs text-slate-200">
+          
+          {/* Roof Toggle */}
+          <button
+            onClick={() => setShowRoof(prev => !prev)}
+            className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 ${
+              showRoof ? 'bg-slate-800 text-sky-400 border border-sky-500/30' : 'bg-slate-800/60 text-slate-400'
+            }`}
+          >
+            <Eye className="w-3 h-3" /> {showRoof ? 'Roof: ON' : 'Roof: OFF'}
+          </button>
+
+          {/* Furniture Toggle */}
+          <button
+            onClick={() => setShowFurniture(prev => !prev)}
+            className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 ${
+              showFurniture ? 'bg-slate-800 text-sky-400 border border-sky-500/30' : 'bg-slate-800/60 text-slate-400'
+            }`}
+          >
+            {showFurniture ? 'Furniture: ON' : 'Furniture: OFF'}
+          </button>
+
+          {/* Room Labels Toggle */}
+          <button
+            onClick={() => setShowRoomLabels(prev => !prev)}
+            className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 ${
+              showRoomLabels ? 'bg-slate-800 text-sky-400 border border-sky-500/30' : 'bg-slate-800/60 text-slate-400'
+            }`}
+          >
+            {showRoomLabels ? 'Tags: ON' : 'Tags: OFF'}
+          </button>
+
+          <div className="h-3.5 w-px bg-slate-700" />
+
+          {/* Exploded Axonometric Slider */}
+          <div className="flex items-center gap-1.5 px-2 py-0.5 bg-slate-800/80 rounded-lg">
+            <span className="font-semibold text-slate-400 text-[10px]">Explode:</span>
             <input
               type="range"
               min="0"
               max="15"
-              step="1"
-              value={explodedHeight}
-              onChange={(e) => setExplodedHeight(Number(e.target.value))}
-              className="w-28 accent-indigo-500 cursor-pointer"
+              step="0.5"
+              value={explodedDistance}
+              onChange={(e) => setExplodedDistance(Number(e.target.value))}
+              className="w-16 accent-sky-500 cursor-pointer"
             />
-            <span className="text-indigo-400 font-bold">{explodedHeight} ft</span>
+            <span className="font-mono text-sky-400 text-[10px] w-5">{explodedDistance}'</span>
           </div>
-        )}
 
-        {/* Camera Angles */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-slate-500 text-[10px] uppercase font-bold">Camera:</span>
-          {['iso', 'top', 'front', 'side'].map(cam => (
+          <div className="h-3.5 w-px bg-slate-700" />
+
+          {/* Revit Section Cut */}
+          <div className="flex items-center gap-1.5">
             <button
-              key={cam}
-              onClick={() => setCameraAngle(cam)}
-              className="px-2 py-0.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:text-white uppercase font-bold text-[10px] transition"
+              onClick={() => setIsSectionActive(prev => !prev)}
+              className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 ${
+                isSectionActive ? 'bg-amber-500 text-slate-950 font-black shadow-xs' : 'bg-slate-800 text-slate-300'
+              }`}
             >
-              {cam}
+              <Scissors className="w-3 h-3" /> Section
             </button>
-          ))}
-        </div>
 
-      </div>
-
-      {/* 3D CANVAS MOUNT */}
-      <div className="flex-1 w-full h-full relative overflow-hidden">
-        <div ref={mountRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
-
-        {/* Selected Room 3D Live Inspector Badge */}
-        {selected3DRoom && (
-          <div className="absolute top-4 left-4 bg-slate-900/90 text-white backdrop-blur-md border border-slate-700 p-3.5 rounded-2xl shadow-2xl max-w-xs space-y-1.5 animate-in fade-in">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-black text-sky-400 uppercase tracking-wide">{selected3DRoom.name}</span>
-              <button onClick={() => setSelected3DRoom(null)} className="text-slate-400 hover:text-white text-xs">✕</button>
-            </div>
-            <div className="text-[11px] font-mono text-slate-300 space-y-0.5">
-              <div>Dimensions: <strong className="text-white">{selected3DRoom.width}' × {selected3DRoom.height}'</strong></div>
-              <div>Floor Area: <strong className="text-emerald-400">{selected3DRoom.area} sq.ft</strong></div>
-              <div>Clearance Height: <strong className="text-white">{wallHeight} ft</strong> (NBC 2016)</div>
-            </div>
-          </div>
-        )}
-
-        {/* Architectural 3D Legend */}
-        <div className="absolute bottom-4 right-4 bg-slate-950/85 text-white backdrop-blur-md px-3.5 py-2.5 rounded-2xl shadow-xl text-xs font-mono border border-slate-800 space-y-1.5">
-          <div className="font-black text-amber-400 uppercase tracking-wider text-[10px]">Natural Material Legend</div>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-slate-300">
-            <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 bg-[#c89d7c] rounded-xs"></span> Oak Parquet</div>
-            <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 bg-[#faf5ee] border border-slate-500 rounded-xs"></span> Ceramic Tile</div>
-            <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 bg-[#f1ede6] rounded-xs"></span> Stucco Plaster</div>
-            <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 bg-[#5c3317] rounded-xs"></span> Teak Doors</div>
-            <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 bg-[#bae6fd] rounded-xs"></span> Physical Glass</div>
-            <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 bg-[#4d7c38] rounded-xs"></span> Lawn Base</div>
+            {isSectionActive && (
+              <div className="flex items-center gap-1.5 bg-slate-800 px-2 py-0.5 rounded-lg">
+                <input
+                  type="range"
+                  min="2"
+                  max={Math.max(20, bimModel.levels.length * bimModel.settings.floorHeight)}
+                  step="0.5"
+                  value={sectionHeight}
+                  onChange={(e) => setSectionHeight(Number(e.target.value))}
+                  className="w-16 accent-amber-500 cursor-pointer"
+                />
+                <span className="font-mono text-amber-400 text-[10px]">{sectionHeight} {unit}</span>
+              </div>
+            )}
           </div>
         </div>
-
       </div>
+
+      {/* 4. REVIT-STYLE BIM PROPERTIES INSPECTOR PANEL (Right Sidebar) */}
+      {inspectorOpen && selectedBimObject && (
+        <div className="absolute top-20 right-4 z-30 w-80 max-h-[80vh] overflow-y-auto bg-slate-900/95 backdrop-blur-xl border border-slate-700 rounded-3xl p-5 shadow-2xl text-slate-200 transition-all animate-in slide-in-from-right-4">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse" />
+              <h3 className="font-black text-sm uppercase tracking-wider text-cyan-300">
+                BIM Element Inspector
+              </h3>
+            </div>
+            <button 
+              onClick={() => setInspectorOpen(false)}
+              className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="mt-4 space-y-4 text-xs">
+            {/* Category / Family */}
+            <div className="bg-slate-800/80 p-3 rounded-2xl border border-slate-700/60">
+              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Category / Family</span>
+              <p className="text-sm font-extrabold text-white mt-0.5">
+                {selectedBimObject.type === 'wall' && `${selectedBimObject.data.type === 'exterior' ? 'Exterior Masonry Wall' : 'Interior Partition Wall'}`}
+                {selectedBimObject.type === 'door' && (selectedBimObject.data.type || 'Single Flush Door')}
+                {selectedBimObject.type === 'window' && (selectedBimObject.data.type || 'Glazed Casement Window')}
+                {selectedBimObject.type === 'room' && `Room: ${selectedBimObject.data.name}`}
+                {selectedBimObject.type === 'stair' && 'Monolithic Architectural Stair'}
+                {selectedBimObject.type === 'slab' && 'Cast-in-Place Concrete Slab'}
+                {selectedBimObject.type === 'roof' && 'Building Roof System'}
+              </p>
+              <span className="inline-block mt-1 px-2 py-0.5 rounded-md bg-cyan-950/70 border border-cyan-800 text-cyan-400 text-[10px] font-mono">
+                ID: {selectedBimObject.data.id || 'BIM_EL_01'}
+              </span>
+            </div>
+
+            {/* Base Level Constraint */}
+            <div className="flex justify-between items-center py-1.5 border-b border-slate-800">
+              <span className="text-slate-400">Base Constraint:</span>
+              <span className="font-bold text-white">{selectedBimObject.level?.name || 'Ground Floor'}</span>
+            </div>
+
+            {/* Parametric Dimensions */}
+            {selectedBimObject.type === 'wall' && (
+              <>
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-800">
+                  <span className="text-slate-400">Wall Length:</span>
+                  <span className="font-mono font-bold text-cyan-400">{selectedBimObject.data.length} {unit}</span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-800">
+                  <span className="text-slate-400">Height:</span>
+                  <span className="font-mono font-bold text-cyan-400">{selectedBimObject.data.height} {unit}</span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-800">
+                  <span className="text-slate-400">Thickness:</span>
+                  <span className="font-mono font-bold text-cyan-400">{selectedBimObject.data.thickness} {unit}</span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-800">
+                  <span className="text-slate-400">Wall Area:</span>
+                  <span className="font-mono font-bold text-cyan-400">{Math.round(selectedBimObject.data.length * selectedBimObject.data.height)} sq.{unit}</span>
+                </div>
+              </>
+            )}
+
+            {selectedBimObject.type === 'room' && (
+              <>
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-800">
+                  <span className="text-slate-400">Dimensions (W × L):</span>
+                  <span className="font-mono font-bold text-cyan-400">{selectedBimObject.data.width}' × {selectedBimObject.data.height}'</span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-800">
+                  <span className="text-slate-400">Calculated Area:</span>
+                  <span className="font-mono font-bold text-emerald-400">{selectedBimObject.data.area} sq.{unit}</span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-800">
+                  <span className="text-slate-400">Carpet Area:</span>
+                  <span className="font-mono font-bold text-emerald-400">{selectedBimObject.data.carpetArea} sq.{unit}</span>
+                </div>
+              </>
+            )}
+
+            {selectedBimObject.type === 'door' && (
+              <>
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-800">
+                  <span className="text-slate-400">Door Width:</span>
+                  <span className="font-mono font-bold text-cyan-400">{selectedBimObject.data.width} {unit}</span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-800">
+                  <span className="text-slate-400">Door Height:</span>
+                  <span className="font-mono font-bold text-cyan-400">{selectedBimObject.data.height} {unit}</span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-800">
+                  <span className="text-slate-400">Connected Room:</span>
+                  <span className="font-bold text-white">{selectedBimObject.data.roomName}</span>
+                </div>
+              </>
+            )}
+
+            {selectedBimObject.type === 'window' && (
+              <>
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-800">
+                  <span className="text-slate-400">Window Width:</span>
+                  <span className="font-mono font-bold text-cyan-400">{selectedBimObject.data.width} {unit}</span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-800">
+                  <span className="text-slate-400">Window Height:</span>
+                  <span className="font-mono font-bold text-cyan-400">{selectedBimObject.data.height} {unit}</span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 border-b border-slate-800">
+                  <span className="text-slate-400">Sill Height:</span>
+                  <span className="font-mono font-bold text-cyan-400">{selectedBimObject.data.sillHeight} {unit}</span>
+                </div>
+              </>
+            )}
+
+            <div className="p-3 bg-sky-950/40 border border-sky-800/40 rounded-2xl text-[11px] text-sky-300">
+              <span className="font-bold flex items-center gap-1 mb-1">
+                <Info className="w-3.5 h-3.5" /> NBC 2016 Compliant
+              </span>
+              Parametric BIM component linked synchronously with 2D plan geometry.
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
+}
+
+// ============================================================================
+// THREE.JS 3D MESH GENERATION HELPERS
+// ============================================================================
+
+/**
+ * Builds a parametric wall segment with clean openings.
+ * Supports Cutaway 3D Floor Plan mode (4.5 ft walls with dark cut cap)
+ * and Full Building Facade mode (10 ft walls).
+ */
+function buildParametricWallWithOpenings(wall, materials, isTech, targetHeight, isCutaway) {
+  const group = new THREE.Group();
+  group.name = wall.id;
+
+  const dx = wall.end.x - wall.start.x;
+  const dy = wall.end.y - wall.start.y;
+  const length = Math.hypot(dx, dy);
+  const angle = Math.atan2(dy, dx);
+  const height = targetHeight;
+  const thickness = wall.thickness;
+  const wallMat = wall.type === 'exterior' ? materials.wallExt : materials.wallInt;
+
+  group.position.set(wall.start.x, wall.baseElevation, wall.start.y);
+  group.rotation.y = -angle;
+
+  const openings = [...(wall.openings || [])].sort((a, b) => a.offset - b.offset);
+
+  let currentU = 0;
+
+  openings.forEach((op) => {
+    const opStart = Math.max(0, Math.min(length, op.offset));
+    const opEnd = Math.max(0, Math.min(length, opStart + op.width));
+    const opW = opEnd - opStart;
+
+    // 1. Solid wall section before opening
+    if (opStart > currentU + 0.05) {
+      const segLen = opStart - currentU;
+      const segMesh = new THREE.Mesh(new THREE.BoxGeometry(segLen, height, thickness), wallMat);
+      segMesh.position.set(currentU + segLen / 2, height / 2, 0);
+      segMesh.castShadow = true;
+      segMesh.receiveShadow = true;
+      group.add(segMesh);
+
+      // Dark Poche Top Cap in Cutaway Mode
+      if (isCutaway) {
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(segLen, 0.06, thickness + 0.02), materials.wallCutCap);
+        cap.position.set(currentU + segLen / 2, height + 0.03, 0);
+        group.add(cap);
+      }
+    }
+
+    // 2. Wall section at opening
+    if (opW > 0.1) {
+      // Sill wall below window
+      if (op.sillHeight > 0.05 && op.sillHeight < height) {
+        const actualSillH = Math.min(op.sillHeight, height);
+        const sillMesh = new THREE.Mesh(new THREE.BoxGeometry(opW, actualSillH, thickness), wallMat);
+        sillMesh.position.set(opStart + opW / 2, actualSillH / 2, 0);
+        sillMesh.castShadow = true;
+        sillMesh.receiveShadow = true;
+        group.add(sillMesh);
+      }
+
+      // Lintel wall above opening (only in Full Facade mode)
+      if (!isCutaway) {
+        const lintelY = op.sillHeight + op.height;
+        if (height > lintelY + 0.05) {
+          const lintelH = height - lintelY;
+          const lintelMesh = new THREE.Mesh(new THREE.BoxGeometry(opW, lintelH, thickness), wallMat);
+          lintelMesh.position.set(opStart + opW / 2, lintelY + lintelH / 2, 0);
+          lintelMesh.castShadow = true;
+          lintelMesh.receiveShadow = true;
+          group.add(lintelMesh);
+        }
+      }
+
+      // Insert 3D Architectural Component (Door or Window)
+      const compH = isCutaway ? Math.min(op.height, height) : op.height;
+      if (op.type === 'door') {
+        const doorComp = build3DDoorComponent(opW, compH, thickness, materials);
+        doorComp.position.set(opStart, 0, 0);
+        group.add(doorComp);
+      } else if (op.type === 'window' && op.sillHeight < height) {
+        const winCompH = Math.min(op.height, height - op.sillHeight);
+        if (winCompH > 0.5) {
+          const winComp = build3DWindowComponent(opW, winCompH, thickness, materials);
+          winComp.position.set(opStart, op.sillHeight, 0);
+          group.add(winComp);
+        }
+      }
+    }
+
+    currentU = opEnd;
+  });
+
+  // 3. Final solid wall section after last opening
+  if (length > currentU + 0.05) {
+    const segLen = length - currentU;
+    const segMesh = new THREE.Mesh(new THREE.BoxGeometry(segLen, height, thickness), wallMat);
+    segMesh.position.set(currentU + segLen / 2, height / 2, 0);
+    segMesh.castShadow = true;
+    segMesh.receiveShadow = true;
+    group.add(segMesh);
+
+    // Dark Poche Top Cap
+    if (isCutaway) {
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(segLen, 0.06, thickness + 0.02), materials.wallCutCap);
+      cap.position.set(currentU + segLen / 2, height + 0.03, 0);
+      group.add(cap);
+    }
+  }
+
+  return group;
+}
+
+/**
+ * Builds realistic 3D Door Component with frame, swinging panel, and handle
+ */
+function build3DDoorComponent(width, height, wallThick, materials) {
+  const group = new THREE.Group();
+
+  const frameThick = 0.14;
+  const frameMat = materials.doorFrame;
+  const leafMat = materials.doorWood;
+
+  // Left Jamb
+  const leftJamb = new THREE.Mesh(new THREE.BoxGeometry(frameThick, height, wallThick + 0.04), frameMat);
+  leftJamb.position.set(frameThick / 2, height / 2, 0);
+  group.add(leftJamb);
+
+  // Right Jamb
+  const rightJamb = new THREE.Mesh(new THREE.BoxGeometry(frameThick, height, wallThick + 0.04), frameMat);
+  rightJamb.position.set(width - frameThick / 2, height / 2, 0);
+  group.add(rightJamb);
+
+  // Door Leaf swinging open 35° into the room
+  const leafW = width - frameThick * 2;
+  const leafH = height - frameThick * 0.5;
+  const leafThick = 0.12;
+
+  const leafGroup = new THREE.Group();
+  leafGroup.position.set(frameThick, 0, 0); // Hinge pivot
+
+  const leafMesh = new THREE.Mesh(new THREE.BoxGeometry(leafW, leafH, leafThick), leafMat);
+  leafMesh.position.set(leafW / 2, leafH / 2, 0);
+  leafMesh.castShadow = true;
+  leafGroup.add(leafMesh);
+
+  // Lever Handle
+  const handleGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.5, 8);
+  const handle = new THREE.Mesh(handleGeo, materials.doorHandle);
+  handle.rotation.z = Math.PI / 2;
+  handle.position.set(leafW * 0.85, Math.min(3.2, leafH * 0.5), leafThick / 2 + 0.08);
+  leafGroup.add(handle);
+
+  leafGroup.rotation.y = Math.PI / 5.5; // ~33° swing
+  group.add(leafGroup);
+
+  return group;
+}
+
+/**
+ * Builds 3D Window Component with outer frame, glazed pane, and exterior sill
+ */
+function build3DWindowComponent(width, height, wallThick, materials) {
+  const group = new THREE.Group();
+
+  const frameThick = 0.12;
+  const frameMat = materials.windowFrame;
+  const glassMat = materials.windowGlass;
+
+  // Glass Pane
+  const glassGeo = new THREE.BoxGeometry(width - frameThick * 2, height - frameThick * 2, 0.04);
+  const glassMesh = new THREE.Mesh(glassGeo, glassMat);
+  glassMesh.position.set(width / 2, height / 2, 0);
+  group.add(glassMesh);
+
+  // Vertical Central Mullion
+  const mullion = new THREE.Mesh(new THREE.BoxGeometry(frameThick, height - frameThick * 2, wallThick * 0.8), frameMat);
+  mullion.position.set(width / 2, height / 2, 0);
+  group.add(mullion);
+
+  // Outer Frame Perimeter
+  const bLeft = new THREE.Mesh(new THREE.BoxGeometry(frameThick, height, wallThick * 0.85), frameMat);
+  bLeft.position.set(frameThick / 2, height / 2, 0);
+  group.add(bLeft);
+
+  const bRight = new THREE.Mesh(new THREE.BoxGeometry(frameThick, height, wallThick * 0.85), frameMat);
+  bRight.position.set(width - frameThick / 2, height / 2, 0);
+  group.add(bRight);
+
+  // Exterior Sill Ledge
+  const bBottom = new THREE.Mesh(new THREE.BoxGeometry(width + 0.2, 0.15, wallThick + 0.2), materials.windowSill);
+  bBottom.position.set(width / 2, 0.08, 0);
+  group.add(bBottom);
+
+  return group;
+}
+
+/**
+ * Builds Balcony Railing with tinted tempered glass panels and metal posts
+ */
+function buildBalconyGlassRailing(room, elevation, materials) {
+  const group = new THREE.Group();
+  const rw = room.width;
+  const rh = room.height;
+  const railH = 3.2;
+
+  // Front glass panel
+  const frontGlass = new THREE.Mesh(new THREE.BoxGeometry(rw, railH, 0.08), materials.glassRailing);
+  frontGlass.position.set(room.x + rw / 2, elevation + 0.5 + railH / 2, room.y + rh);
+  group.add(frontGlass);
+
+  // Top handrail bar
+  const topRail = new THREE.Mesh(new THREE.BoxGeometry(rw, 0.12, 0.16), materials.railingPost);
+  topRail.position.set(room.x + rw / 2, elevation + 0.5 + railH + 0.06, room.y + rh);
+  group.add(topRail);
+
+  // Metal corner posts
+  const p1 = new THREE.Mesh(new THREE.BoxGeometry(0.15, railH + 0.1, 0.15), materials.railingPost);
+  p1.position.set(room.x + 0.1, elevation + 0.5 + railH / 2, room.y + rh);
+  group.add(p1);
+
+  const p2 = new THREE.Mesh(new THREE.BoxGeometry(0.15, railH + 0.1, 0.15), materials.railingPost);
+  p2.position.set(room.x + rw - 0.1, elevation + 0.5 + railH / 2, room.y + rh);
+  group.add(p2);
+
+  return group;
+}
+
+/**
+ * Builds architectural concrete floor slab with plinth beam band
+ */
+function buildBimSlabMesh(slab, materials, isTech) {
+  const thick = slab.thickness || 0.5;
+  const w = slab.width;
+  const l = slab.length;
+
+  const group = new THREE.Group();
+
+  // If upper floor slab has staircase void hole, extrude with hole
+  if (slab.voids && slab.voids.length > 0) {
+    const shape = new THREE.Shape();
+    shape.moveTo(0, 0);
+    shape.lineTo(w, 0);
+    shape.lineTo(w, l);
+    shape.lineTo(0, l);
+    shape.closePath();
+
+    slab.voids.forEach(v => {
+      const hole = new THREE.Path();
+      const vx = Math.max(0, v.x - slab.x);
+      const vy = Math.max(0, v.y - slab.y);
+      hole.moveTo(vx, vy);
+      hole.lineTo(vx + v.width, vy);
+      hole.lineTo(vx + v.width, vy + v.length);
+      hole.lineTo(vx, vy + v.length);
+      hole.closePath();
+      shape.holes.push(hole);
+    });
+
+    const extrudeGeo = new THREE.ExtrudeGeometry(shape, { depth: thick, bevelEnabled: false });
+    extrudeGeo.rotateX(Math.PI / 2);
+
+    const slabMesh = new THREE.Mesh(extrudeGeo, materials.slabConcrete);
+    slabMesh.position.set(slab.x, slab.elevation + thick, slab.y);
+    slabMesh.receiveShadow = true;
+    slabMesh.castShadow = true;
+    group.add(slabMesh);
+    return group;
+  }
+
+  // Ground plinth base band (1.5 ft foundation plinth)
+  if (slab.elevation < 0.1) {
+    const plinthGeo = new THREE.BoxGeometry(w + 0.4, 1.2, l + 0.4);
+    const plinthMesh = new THREE.Mesh(plinthGeo, materials.plinthBeam);
+    plinthMesh.position.set(slab.x + w / 2, 0.6, slab.y + l / 2);
+    plinthMesh.receiveShadow = true;
+    group.add(plinthMesh);
+  }
+
+  // Slab with Staircase Void Cutout support
+  if (slab.voids && slab.voids.length > 0) {
+    const shape = new THREE.Shape();
+    shape.moveTo(0, 0);
+    shape.lineTo(w, 0);
+    shape.lineTo(w, l);
+    shape.lineTo(0, l);
+    shape.closePath();
+
+    slab.voids.forEach(v => {
+      const hole = new THREE.Path();
+      const hx = Math.max(0, v.x - slab.x);
+      const hy = Math.max(0, v.y - slab.y);
+      const hw = Math.min(w - hx, v.width);
+      const hl = Math.min(l - hy, v.length);
+      hole.moveTo(hx, hy);
+      hole.lineTo(hx + hw, hy);
+      hole.lineTo(hx + hw, hy + hl);
+      hole.lineTo(hx, hy + hl);
+      hole.closePath();
+      shape.holes.push(hole);
+    });
+
+    const extrudeSettings = { depth: thick, bevelEnabled: false };
+    const slabGeo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+    slabGeo.rotateX(Math.PI / 2);
+    const slabMesh = new THREE.Mesh(slabGeo, materials.slabConcrete);
+    slabMesh.position.set(slab.x, slab.elevation + thick, slab.y);
+    slabMesh.receiveShadow = true;
+    slabMesh.castShadow = true;
+    group.add(slabMesh);
+
+    // Safety Guardrail around the upper floor void opening
+    slab.voids.forEach(v => {
+      const guardH = 2.8;
+      const gGlassMat = materials.glassRailing || materials.stairRailing;
+
+      // Outer side of void (east side facing rooms)
+      const railEast = new THREE.Mesh(new THREE.BoxGeometry(0.12, guardH, v.length), gGlassMat);
+      railEast.position.set(v.x + v.width, slab.elevation + thick + guardH / 2, v.y + v.length / 2);
+      group.add(railEast);
+    });
+  } else {
+    const slabGeo = new THREE.BoxGeometry(w, thick, l);
+    const slabMesh = new THREE.Mesh(slabGeo, materials.slabConcrete);
+    slabMesh.position.set(slab.x + w / 2, slab.elevation + thick / 2, slab.y + l / 2);
+    slabMesh.receiveShadow = true;
+    slabMesh.castShadow = true;
+    group.add(slabMesh);
+  }
+
+  return group;
+}
+
+/**
+ * Builds Room Floor Surface with appropriate material finish (wood, marble, tile)
+ */
+function buildRoomFloorMesh(room, elevation, materials) {
+  // If it's the staircase well on the upper floor, do NOT cover the void!
+  if (room.type === 'Staircase' && elevation > 0.1) {
+    return new THREE.Group();
+  }
+
+  const rw = room.width - 0.08;
+  const rh = room.height - 0.08;
+  const geo = new THREE.BoxGeometry(rw, 0.08, rh);
+
+  let mat = materials.slabConcrete;
+  if (['Bedroom', 'Master Bedroom'].includes(room.type)) {
+    mat = new THREE.MeshStandardMaterial({ color: '#c49a6c', roughness: 0.45 }); // Oak Hardwood
+  } else if (room.type === 'Kitchen') {
+    mat = new THREE.MeshStandardMaterial({ color: '#fef08a', roughness: 0.3 }); // Polished Ceramic Tile
+  } else if (['Bathroom', 'Washroom'].includes(room.type)) {
+    mat = new THREE.MeshStandardMaterial({ color: '#94a3b8', roughness: 0.6 }); // Anti-skid Mosaic
+  } else if (room.type === 'Living Room' || room.type === 'Hall') {
+    mat = new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.3 }); // Italian White Marble
+  } else if (room.type === 'Balcony') {
+    mat = new THREE.MeshStandardMaterial({ color: '#cbd5e1', roughness: 0.7 }); // Paver Tiles
+  }
+
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(room.x + room.width / 2, elevation + 0.54, room.y + room.height / 2);
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+/**
+ * Creates 3D Floating Room Label Sprite
+ */
+function createRoomLabelSprite(room, yPos) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 80;
+  const ctx = canvas.getContext('2d');
+
+  // Background rounded pill
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+  ctx.beginPath();
+  ctx.roundRect(8, 8, 240, 64, 16);
+  ctx.fill();
+
+  ctx.strokeStyle = '#38bdf8';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  // Room Name
+  ctx.font = 'bold 22px system-ui, sans-serif';
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'center';
+  ctx.fillText(room.name, 128, 36);
+
+  // Dimensions
+  ctx.font = '16px monospace';
+  ctx.fillStyle = '#7dd3fc';
+  ctx.fillText(`${room.width}' × ${room.height}' (${room.area} sq.ft)`, 128, 58);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  const spriteMat = new THREE.SpriteMaterial({ map: tex, depthTest: false });
+  const sprite = new THREE.Sprite(spriteMat);
+  sprite.position.set(room.x + room.width / 2, yPos, room.y + room.height / 2);
+  sprite.scale.set(6, 2, 1);
+  return sprite;
+}
+
+/**
+ * Builds authentic Architectural Dog-Legged 3D Staircase
+ */
+function buildArchitecturalStair(stair, materials) {
+  const group = new THREE.Group();
+  group.name = stair.id;
+
+  const totalRise = (stair.topElevation - stair.baseElevation) || 10.0;
+  const stairW = stair.width;
+  const stairL = stair.length;
+  const isDogLegged = stair.isDogLegged !== false && stairW >= 5.5;
+
+  if (isDogLegged) {
+    // Two parallel flights with mid-landing (Standard Indian & International residential stair)
+    const wellGap = 0.4;
+    const flightW = Math.min((stairW - wellGap) / 2, 3.4);
+    const landingD = Math.max(3.0, Math.min(3.6, stairL * 0.32));
+    const runL = stairL - landingD;
+
+    const riserCount1 = 8;
+    const riserCount2 = 8;
+    const riserH = totalRise / (riserCount1 + riserCount2);
+    const treadD = runL / (riserCount1 - 1);
+
+    // --- Flight 1 (Left flight, starts at entry Y, climbs towards landing at Y+runL) ---
+    const f1X = stair.x + flightW / 2;
+    for (let i = 0; i < riserCount1; i++) {
+      const stepGeo = new THREE.BoxGeometry(flightW - 0.05, riserH, treadD);
+      const stepMesh = new THREE.Mesh(stepGeo, materials.stairTread);
+      stepMesh.position.set(
+        f1X,
+        stair.baseElevation + 0.5 + i * riserH + riserH / 2,
+        stair.y + i * treadD + treadD / 2
+      );
+      stepMesh.castShadow = true;
+      stepMesh.receiveShadow = true;
+      group.add(stepMesh);
+    }
+
+    // Flight 1 Structural Waist Slab
+    const f1Len = Math.hypot(riserCount1 * riserH, runL);
+    const f1Angle = Math.atan2(riserCount1 * riserH, runL);
+    const waist1 = new THREE.Mesh(
+      new THREE.BoxGeometry(flightW - 0.1, 0.4, f1Len),
+      materials.stairWaist
+    );
+    waist1.position.set(
+      f1X,
+      stair.baseElevation + 0.5 + (riserCount1 * riserH) / 2 - 0.2,
+      stair.y + runL / 2
+    );
+    waist1.rotation.x = f1Angle;
+    group.add(waist1);
+
+    // --- Mid-Landing Platform ---
+    const landingElev = stair.baseElevation + 0.5 + riserCount1 * riserH;
+    const landingGeo = new THREE.BoxGeometry(stairW - 0.1, 0.4, landingD);
+    const landingMesh = new THREE.Mesh(landingGeo, materials.stairTread);
+    landingMesh.position.set(
+      stair.x + stairW / 2,
+      landingElev - 0.2,
+      stair.y + stairL - landingD / 2
+    );
+    landingMesh.castShadow = true;
+    landingMesh.receiveShadow = true;
+    group.add(landingMesh);
+
+    // Landing Support Beam underneath
+    const landBeam = new THREE.Mesh(
+      new THREE.BoxGeometry(stairW - 0.1, 0.35, landingD),
+      materials.stairWaist
+    );
+    landBeam.position.set(stair.x + stairW / 2, landingElev - 0.55, stair.y + stairL - landingD / 2);
+    group.add(landBeam);
+
+    // --- Flight 2 (Right flight, starts at landing, climbs back towards upper floor entry) ---
+    const f2X = stair.x + stairW - flightW / 2;
+    for (let i = 0; i < riserCount2; i++) {
+      const stepGeo = new THREE.BoxGeometry(flightW - 0.05, riserH, treadD);
+      const stepMesh = new THREE.Mesh(stepGeo, materials.stairTread);
+      stepMesh.position.set(
+        f2X,
+        landingElev + i * riserH + riserH / 2,
+        (stair.y + runL) - i * treadD - treadD / 2
+      );
+      stepMesh.castShadow = true;
+      stepMesh.receiveShadow = true;
+      group.add(stepMesh);
+    }
+
+    // Flight 2 Structural Waist Slab
+    const f2Len = Math.hypot(riserCount2 * riserH, runL);
+    const f2Angle = -Math.atan2(riserCount2 * riserH, runL);
+    const waist2 = new THREE.Mesh(
+      new THREE.BoxGeometry(flightW - 0.1, 0.4, f2Len),
+      materials.stairWaist
+    );
+    waist2.position.set(
+      f2X,
+      landingElev + (riserCount2 * riserH) / 2 - 0.2,
+      stair.y + runL / 2
+    );
+    waist2.rotation.x = f2Angle;
+    group.add(waist2);
+
+    // --- Modern Railings along Central Stair Well ---
+    const railH = 2.8;
+    const rail1 = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.04, 0.04, f1Len, 8),
+      materials.stairRailing
+    );
+    rail1.position.set(
+      stair.x + flightW + 0.05,
+      stair.baseElevation + 0.5 + (riserCount1 * riserH) / 2 + railH,
+      stair.y + runL / 2
+    );
+    rail1.rotation.x = -f1Angle + Math.PI / 2;
+    group.add(rail1);
+
+    const rail2 = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.04, 0.04, f2Len, 8),
+      materials.stairRailing
+    );
+    rail2.position.set(
+      stair.x + stairW - flightW - 0.05,
+      landingElev + (riserCount2 * riserH) / 2 + railH,
+      stair.y + runL / 2
+    );
+    rail2.rotation.x = f1Angle + Math.PI / 2;
+    group.add(rail2);
+
+    const crossRail = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.04, 0.04, stairW - 0.4, 8),
+      materials.stairRailing
+    );
+    crossRail.position.set(stair.x + stairW / 2, landingElev + railH, stair.y + stairL - 0.15);
+    crossRail.rotation.z = Math.PI / 2;
+    group.add(crossRail);
+
+  } else {
+    // Straight Flight
+    const riserCount = stair.riserCount || 16;
+    const riserH = totalRise / riserCount;
+    const treadD = (stairL - 0.5) / (riserCount - 1);
+    const flightW = Math.min(stairW - 0.2, 3.4);
+
+    for (let i = 0; i < riserCount; i++) {
+      const stepGeo = new THREE.BoxGeometry(flightW, riserH, treadD);
+      const stepMesh = new THREE.Mesh(stepGeo, materials.stairTread);
+      stepMesh.position.set(
+        stair.x + stairW / 2,
+        stair.baseElevation + 0.5 + i * riserH + riserH / 2,
+        stair.y + i * treadD + treadD / 2
+      );
+      stepMesh.castShadow = true;
+      stepMesh.receiveShadow = true;
+      group.add(stepMesh);
+    }
+
+    const railLen = Math.hypot(riserCount * riserH, riserCount * treadD);
+    const railGeo = new THREE.CylinderGeometry(0.05, 0.05, railLen, 8);
+    const rail = new THREE.Mesh(railGeo, materials.stairRailing);
+    rail.position.set(
+      stair.x + stairW / 2 + flightW / 2 - 0.1,
+      stair.baseElevation + 0.5 + (riserCount * riserH) / 2 + 2.8,
+      stair.y + (riserCount * treadD) / 2
+    );
+    rail.rotation.x = -Math.atan2(riserCount * riserH, riserCount * treadD) + Math.PI / 2;
+    group.add(rail);
+  }
+
+  return group;
+}
+
+/**
+ * Builds Parametric Building Roof System (Flat Parapet / Hip / Gable)
+ */
+function buildBimRoofSystem(roof, roofLevel, materials, isTech) {
+  const group = new THREE.Group();
+  group.name = 'BIM_Roof_System';
+
+  const w = roof.width;
+  const l = roof.length;
+  const overhang = roof.overhang;
+  const elev = roof.elevation;
+
+  if (roof.type === 'sloped_hip' || roof.type === 'sloped_gable') {
+    const roofH = (w / 2) * Math.tan((roof.pitchAngle * Math.PI) / 180);
+    const roofGeo = new THREE.ConeGeometry((w + overhang * 2) * 0.7, roofH, 4);
+    roofGeo.rotateY(Math.PI / 4);
+
+    const roofMesh = new THREE.Mesh(roofGeo, materials.roofTile);
+    roofMesh.position.set(roof.x + w / 2, elev + roofH / 2 + 0.3, roof.y + l / 2);
+    roofMesh.castShadow = true;
+    roofMesh.receiveShadow = true;
+    group.add(roofMesh);
+  } else {
+    // RC Roof Slab
+    const slabGeo = new THREE.BoxGeometry(w + overhang * 2, 0.5, l + overhang * 2);
+    const slabMesh = new THREE.Mesh(slabGeo, materials.roofSlab);
+    slabMesh.position.set(roof.x + w / 2, elev + 0.25, roof.y + l / 2);
+    slabMesh.castShadow = true;
+    slabMesh.receiveShadow = true;
+    group.add(slabMesh);
+
+    // Parapet Wall (3ft / 0.9m) with Coping Cap along perimeter
+    const pHeight = roof.parapetHeight || 3.0;
+    const pThick = 0.5;
+
+    // Parapet North & South
+    const nParapet = new THREE.Mesh(new THREE.BoxGeometry(w + overhang * 2, pHeight, pThick), materials.roofParapet);
+    nParapet.position.set(roof.x + w / 2, elev + 0.5 + pHeight / 2, roof.y - overhang + pThick / 2);
+    group.add(nParapet);
+
+    const sParapet = new THREE.Mesh(new THREE.BoxGeometry(w + overhang * 2, pHeight, pThick), materials.roofParapet);
+    sParapet.position.set(roof.x + w / 2, elev + 0.5 + pHeight / 2, roof.y + l + overhang - pThick / 2);
+    group.add(sParapet);
+
+    // Parapet West & East
+    const wParapet = new THREE.Mesh(new THREE.BoxGeometry(pThick, pHeight, l + overhang * 2), materials.roofParapet);
+    wParapet.position.set(roof.x - overhang + pThick / 2, elev + 0.5 + pHeight / 2, roof.y + l / 2);
+    group.add(wParapet);
+
+    const eParapet = new THREE.Mesh(new THREE.BoxGeometry(pThick, pHeight, l + overhang * 2), materials.roofParapet);
+    eParapet.position.set(roof.x + w + overhang - pThick / 2, elev + 0.5 + pHeight / 2, roof.y + l / 2);
+    group.add(eParapet);
+
+    // Parapet Coping Stones (Dark Cap Stone along Top Edge)
+    const nCoping = new THREE.Mesh(new THREE.BoxGeometry(w + overhang * 2 + 0.2, 0.15, pThick + 0.15), materials.roofCoping);
+    nCoping.position.set(roof.x + w / 2, elev + 0.5 + pHeight + 0.08, roof.y - overhang + pThick / 2);
+    group.add(nCoping);
+
+    const sCoping = new THREE.Mesh(new THREE.BoxGeometry(w + overhang * 2 + 0.2, 0.15, pThick + 0.15), materials.roofCoping);
+    sCoping.position.set(roof.x + w / 2, elev + 0.5 + pHeight + 0.08, roof.y + l + overhang - pThick / 2);
+    group.add(sCoping);
+
+    // Mumty / Stair Headroom Cabin
+    if (roof.hasMumty) {
+      const mumtyW = 8;
+      const mumtyL = 10;
+      const mumtyH = 8.5;
+      const mumtyMesh = new THREE.Mesh(new THREE.BoxGeometry(mumtyW, mumtyH, mumtyL), materials.roofParapet);
+      mumtyMesh.position.set(roof.x + w * 0.3, elev + 0.5 + mumtyH / 2, roof.y + l * 0.3);
+      mumtyMesh.castShadow = true;
+      group.add(mumtyMesh);
+    }
+  }
+
+  return group;
+}
+
+/**
+ * Builds Revit-style Level Datum lines and elevation markers in Technical Mode
+ */
+function buildBimLevelDatums(levels, plotW, plotL, unit) {
+  const group = new THREE.Group();
+  group.name = 'BIM_Level_Datums';
+
+  const datumX = plotW + 4;
+  const lineMat = new THREE.LineBasicMaterial({ color: '#38bdf8', linewidth: 2 });
+
+  levels.forEach(lvl => {
+    const points = [
+      new THREE.Vector3(-2, lvl.elevation, plotL / 2),
+      new THREE.Vector3(datumX, lvl.elevation, plotL / 2)
+    ];
+    const geo = new THREE.BufferGeometry().setFromPoints(points);
+    const line = new THREE.Line(geo, lineMat);
+    group.add(line);
+
+    const marker = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.05, 16), new THREE.MeshBasicMaterial({ color: '#0284c7' }));
+    marker.position.set(datumX, lvl.elevation, plotL / 2);
+    marker.rotation.x = Math.PI / 2;
+    group.add(marker);
+  });
+
+  return group;
 }
